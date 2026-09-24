@@ -286,6 +286,34 @@ tbody tr:hover{background:var(--surface-alt);}
   #print-area .p-foot{margin-top:30px; font-size:10.5px; color:#555; border-top:1px solid #ddd; padding-top:10px;}
 }
 
+/* signature électronique */
+.sig-pad-wrap{border:1px solid var(--border); border-radius:8px; background:#fff; overflow:hidden; max-width:420px;}
+.sig-pad-wrap canvas{display:block; width:100%; height:150px; touch-action:none; cursor:crosshair;}
+.sig-captured{max-width:280px; border:1px solid var(--border); border-radius:8px; background:#fff; padding:8px;}
+.sig-captured img{max-width:100%; display:block;}
+
+/* photos véhicule */
+.photo-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:10px;}
+.photo-thumb{position:relative; border-radius:8px; overflow:hidden; border:1px solid var(--border); aspect-ratio:1; background:var(--surface-alt); cursor:pointer;}
+.photo-thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+.photo-thumb .photo-del{position:absolute; top:4px; right:4px; background:rgba(20,20,20,.65); color:#fff; border:none; border-radius:50%; width:22px; height:22px; cursor:pointer; font-size:12px; line-height:1;}
+.photo-lightbox{position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:250; display:flex; align-items:center; justify-content:center; padding:20px;}
+.photo-lightbox img{max-width:100%; max-height:100%; border-radius:6px;}
+.photo-lightbox .close-lb{position:absolute; top:16px; right:16px; background:rgba(255,255,255,.15); color:#fff; border:none; border-radius:50%; width:36px; height:36px; font-size:18px; cursor:pointer;}
+
+/* assistant de configuration */
+.onboard-screen{position:fixed; inset:0; background:var(--bg); z-index:400; display:flex; align-items:center; justify-content:center; padding:20px; overflow-y:auto;}
+.onboard-card{background:var(--surface); border-radius:14px; padding:36px; width:100%; max-width:520px; box-shadow:0 20px 50px rgba(0,0,0,.15);}
+.onboard-steps{display:flex; gap:6px; margin-bottom:22px;}
+.onboard-steps .dot{flex:1; height:4px; border-radius:4px; background:var(--surface-alt);}
+.onboard-steps .dot.done{background:var(--accent);}
+
+/* tri des tableaux */
+th.sortable{cursor:pointer; user-select:none;}
+th.sortable:hover{color:var(--ink);}
+th.sortable .arrow{opacity:.4; font-size:9px; margin-left:3px;}
+th.sortable.sorted .arrow{opacity:1; color:var(--accent);}
+
 @media(max-width:880px){
   .sidebar{position:fixed; top:0; left:0; bottom:0; transform:translateX(-100%);}
   .sidebar.open{transform:translateX(0); box-shadow:0 0 40px rgba(0,0,0,.35);}
@@ -321,6 +349,7 @@ tbody tr:hover{background:var(--surface-alt);}
   <div class="voice-panel" id="voicePanel" style="display:none;"></div>
 </div>
 <div id="loginScreen" class="login-screen"></div>
+<div id="onboardScreen" class="onboard-screen" style="display:none;"></div>
 <div id="modalRoot"></div>
 <div id="print-area"></div>
 
@@ -349,7 +378,7 @@ function defaultDB(){
       nomGarage: 'Mon Garage', adresse: '', cp: '', ville: '', tel: '', email: '', siret: '', tvaIntracom: '',
       tauxTVA: 20,
       mentions: "En cas de retard de paiement, une indemnité forfaitaire de 40€ pour frais de recouvrement est exigible (art. L441-10 C. com.). Devis valable 30 jours.",
-      compteurDevis: 0, compteurFacture: 0, logo: '', makeWebhookUrl: '', ctNotifsSent: {}, dernierEnvoiRapportMensuel: ''
+      compteurDevis: 0, compteurFacture: 0, logo: '', makeWebhookUrl: '', ctNotifsSent: {}, dernierEnvoiRapportMensuel: '', onboardingDone: false
     }
   };
 }
@@ -674,7 +703,100 @@ function getSessionUser(){
   return db.utilisateurs.find(u=>u.id===uidS && u.actif!==false) || null;
 }
 function currentRole(){ const u = getSessionUser(); return u ? u.role : 'admin'; }
+function needsOnboarding(){
+  return !db.settings.onboardingDone && db.clients.length===0 && db.vehicules.length===0 && db.factures.length===0 && db.devis.length===0 && db.utilisateurs.length===0;
+}
+
+/* =========================================================================
+   ASSISTANT DE PREMIÈRE CONFIGURATION
+   ========================================================================= */
+let onboardStep = 1;
+let onboardData = {nomGarage:'', adresse:'', cp:'', ville:'', tel:'', tauxTVA:20, adminNom:'', adminPin:''};
+function showOnboarding(){ onboardStep = 1; renderOnboarding(); document.getElementById('onboardScreen').style.display='flex'; }
+function onboardDots(){ return [1,2,3].map(n=>`<div class="dot ${onboardStep>n?'done':''}"></div>`).join(''); }
+function renderOnboarding(){
+  const el = document.getElementById('onboardScreen');
+  if(onboardStep===1){
+    el.innerHTML = `
+      <div class="onboard-card">
+        <div class="onboard-steps">${onboardDots()}</div>
+        <div class="brand-mark" style="margin-bottom:16px;"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
+        <h2 style="margin-bottom:6px;">Bienvenue sur GarageOS</h2>
+        <p style="color:var(--ink-soft); font-size:13.5px; margin-bottom:22px;">Quelques informations sur votre garage pour commencer — vous pourrez tout modifier plus tard dans Paramètres.</p>
+        <div class="field"><label>Nom du garage</label><input id="obNom" required placeholder="ex : Garage Bory" value="${esc(onboardData.nomGarage)}"></div>
+        <div class="field-row cols-2">
+          <div class="field"><label>Adresse</label><input id="obAdresse" value="${esc(onboardData.adresse)}"></div>
+          <div class="field"><label>Ville</label><input id="obVille" value="${esc(onboardData.ville)}"></div>
+        </div>
+        <div class="field-row cols-2">
+          <div class="field"><label>Code postal</label><input id="obCp" value="${esc(onboardData.cp)}"></div>
+          <div class="field"><label>Téléphone</label><input id="obTel" value="${esc(onboardData.tel)}"></div>
+        </div>
+        <div class="field"><label>Taux de TVA appliqué habituellement (%)</label><input id="obTva" type="number" step="0.5" value="${onboardData.tauxTVA}"></div>
+        <div class="modal-actions" style="justify-content:flex-end;">
+          <button class="btn btn-primary" onclick="onboardNext1()">Continuer</button>
+        </div>
+      </div>`;
+  } else if(onboardStep===2){
+    el.innerHTML = `
+      <div class="onboard-card">
+        <div class="onboard-steps">${onboardDots()}</div>
+        <h2 style="margin-bottom:6px;">Un compte pour votre équipe ?</h2>
+        <p style="color:var(--ink-soft); font-size:13.5px; margin-bottom:22px;">Si plusieurs personnes utilisent ce poste, crée un premier compte administrateur avec un code à 4 chiffres. Sinon, passe cette étape — l'accès restera libre sur ce poste (tu pourras créer des comptes plus tard dans Utilisateurs).</p>
+        <div class="field"><label>Ton nom</label><input id="obAdminNom" placeholder="ex : Michael" value="${esc(onboardData.adminNom)}"></div>
+        <div class="field"><label>Code PIN à 4 chiffres</label><input id="obAdminPin" maxlength="4" inputmode="numeric" placeholder="ex : 1234" value="${esc(onboardData.adminPin)}"></div>
+        <div class="modal-actions" style="justify-content:space-between;">
+          <button class="btn btn-ghost" onclick="onboardSkip2()">Passer cette étape</button>
+          <button class="btn btn-primary" onclick="onboardNext2()">Continuer</button>
+        </div>
+      </div>`;
+  } else {
+    el.innerHTML = `
+      <div class="onboard-card">
+        <div class="onboard-steps">${onboardDots()}</div>
+        <h2 style="margin-bottom:6px;">C'est prêt !</h2>
+        <p style="color:var(--ink-soft); font-size:13.5px; margin-bottom:22px;">Voici un résumé — tu peux tout changer à tout moment dans Paramètres.</p>
+        <div class="card" style="background:var(--surface-alt); margin-bottom:20px;">
+          <div style="font-size:13.5px; display:flex; flex-direction:column; gap:6px;">
+            <div><strong>${esc(onboardData.nomGarage||'(sans nom)')}</strong></div>
+            <div>${esc(onboardData.adresse)} ${esc(onboardData.cp)} ${esc(onboardData.ville)}</div>
+            <div>TVA par défaut : ${onboardData.tauxTVA}%</div>
+            ${onboardData.adminNom?`<div>Compte créé : ${esc(onboardData.adminNom)} (Administrateur)</div>`:'<div>Accès libre (pas de compte requis)</div>'}
+          </div>
+        </div>
+        <p style="font-size:12.5px; color:var(--ink-faint); margin-bottom:16px;">💡 Astuce : dans Paramètres, tu peux aussi ajouter ton logo, configurer une automatisation Make, et exporter des sauvegardes régulières.</p>
+        <div class="modal-actions" style="justify-content:flex-end;">
+          <button class="btn btn-primary" onclick="finishOnboarding()">Démarrer GarageOS</button>
+        </div>
+      </div>`;
+  }
+}
+function onboardNext1(){
+  onboardData.nomGarage = val('obNom') || 'Mon Garage';
+  onboardData.adresse = val('obAdresse'); onboardData.ville = val('obVille'); onboardData.cp = val('obCp'); onboardData.tel = val('obTel');
+  onboardData.tauxTVA = parseFloat(val('obTva'))||20;
+  onboardStep = 2; renderOnboarding();
+}
+function onboardSkip2(){ onboardData.adminNom=''; onboardData.adminPin=''; onboardStep = 3; renderOnboarding(); }
+function onboardNext2(){
+  const nom = val('obAdminNom'); const pin = val('obAdminPin');
+  if(nom && pin){
+    if(!/^\d{4}$/.test(pin)){ toast('Le code PIN doit contenir exactement 4 chiffres.'); return; }
+    onboardData.adminNom = nom; onboardData.adminPin = pin;
+  }
+  onboardStep = 3; renderOnboarding();
+}
+function finishOnboarding(){
+  Object.assign(db.settings, {nomGarage: onboardData.nomGarage, adresse: onboardData.adresse, ville: onboardData.ville, cp: onboardData.cp, tel: onboardData.tel, tauxTVA: onboardData.tauxTVA, onboardingDone: true});
+  if(onboardData.adminNom && onboardData.adminPin){
+    db.utilisateurs.push({id: uid('usr'), nom: onboardData.adminNom, role:'admin', pin: onboardData.adminPin, actif:true});
+  }
+  saveDB();
+  document.getElementById('onboardScreen').style.display='none';
+  boot();
+}
 function boot(){
+  if(needsOnboarding()){ showOnboarding(); return; }
   const u = getSessionUser();
   if(!u){ showLogin(); } else { showApp(); render(); }
   initAutomations().then(()=>{ maybeSendMonthlyReport(); maybeSendCtReminders(); });
@@ -1000,6 +1122,36 @@ function deleteRdv(id){
    ========================================================================= */
 
 /* ---------- CLIENTS ---------- */
+/* =========================================================================
+   TRI DES TABLEAUX — colonnes cliquables, sans reconstruire toute la vue
+   ========================================================================= */
+let sortState = {};
+function thSort(view, key, label){
+  const s = sortState[view];
+  const active = s && s.key===key;
+  const arrow = active ? (s.dir===1?'▲':'▼') : '⇅';
+  return `<th class="sortable ${active?'sorted':''}" onclick="toggleSort('${view}','${key}')">${label}<span class="arrow">${arrow}</span></th>`;
+}
+const SORT_RERENDER = {
+  clients: ()=>filterClients(state.params.q||''),
+  factures: ()=>filterFactures(state.params.q||'')
+};
+function toggleSort(view, key){
+  const s = sortState[view] || {key:null, dir:1};
+  if(s.key===key) s.dir = -s.dir; else { s.key = key; s.dir = 1; }
+  sortState[view] = s;
+  if(SORT_RERENDER[view]) SORT_RERENDER[view]();
+}
+function applySort(view, list, getters){
+  const s = sortState[view];
+  if(!s || !s.key || !getters[s.key]) return list;
+  const get = getters[s.key];
+  return list.slice().sort((a,b)=>{
+    const va = get(a), vb = get(b);
+    if(va<vb) return -1*s.dir; if(va>vb) return 1*s.dir; return 0;
+  });
+}
+
 function viewClients(root){
   root.innerHTML = `
     <div class="toolbar">
@@ -1007,14 +1159,16 @@ function viewClients(root){
       <button class="btn btn-primary" onclick="openClientForm()">${icoPlus()} Nouveau client</button>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Client</th><th>Type</th><th>Téléphone</th><th>Email</th><th class="num">Véhicules</th></tr></thead>
+      <thead><tr>${thSort('clients','nom','Client')}${thSort('clients','type','Type')}<th>Téléphone</th><th>Email</th>${thSort('clients','vehicules','Véhicules')}</tr></thead>
       <tbody id="clientsBody"></tbody>
     </table></div>
   `;
   filterClients(state.params.q||'');
 }
 function buildClientsRows(q){
-  const list = db.clients.filter(c => !q || (clientLabel(c)+' '+(c.tel||'')+' '+(c.email||'')).toLowerCase().includes(q.toLowerCase())).sort((a,b)=>clientLabel(a).localeCompare(clientLabel(b)));
+  let list = db.clients.filter(c => !q || (clientLabel(c)+' '+(c.tel||'')+' '+(c.email||'')).toLowerCase().includes(q.toLowerCase()));
+  list = applySort('clients', list, {nom:c=>clientLabel(c).toLowerCase(), type:c=>c.type||'', vehicules:c=>vehiculesOf(c.id).length});
+  if(!sortState.clients || !sortState.clients.key) list = list.slice().sort((a,b)=>clientLabel(a).localeCompare(clientLabel(b)));
   if(list.length===0) return `<tr><td colspan="5"><div class="empty">${icoInbox()}<div>Aucun client trouvé.</div></div></td></tr>`;
   return list.map(c=>`<tr onclick="go('clientDetail',{id:'${c.id}'})">
       <td><strong>${esc(clientLabel(c))}</strong></td>
@@ -1193,6 +1347,63 @@ function submitVehiculeForm(ev,id){
 }
 function deleteVehicule(id){ if(!confirm('Supprimer ce véhicule ?')) return; db.vehicules = db.vehicules.filter(v=>v.id!==id); saveDB(); closeModal(); render(); }
 
+/* =========================================================================
+   PHOTOS VÉHICULE — état des lieux, avant/après intervention
+   Les images sont redimensionnées et compressées côté navigateur avant
+   stockage (localStorage a une capacité limitée, quelques Mo en général).
+   ========================================================================= */
+function compressImageFile(file, maxDim, quality){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = (e)=>{
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = ()=>{
+        let w = img.width, h = img.height;
+        const scale = Math.min(1, (maxDim||1000)/Math.max(w,h));
+        w = Math.round(w*scale); h = Math.round(h*scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality||0.75));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+async function addVehiculePhotos(vehiculeId, input){
+  const files = Array.from(input.files||[]);
+  if(files.length===0) return;
+  const v = getVehicule(vehiculeId); if(!v) return;
+  v.photos = v.photos || [];
+  toast(`Ajout de ${files.length} photo(s)…`);
+  for(const file of files){
+    try{
+      const dataUrl = await compressImageFile(file, 1000, 0.72);
+      v.photos.push({id: uid('pho'), dataUrl, date: TODAY()});
+    }catch(e){ console.warn('Erreur photo', e); }
+  }
+  try{ saveDB(); toast('Photos ajoutées.'); render(); }
+  catch(e){ toast('Stockage plein — supprime quelques photos ou exporte une sauvegarde et réinitialise.'); v.photos.splice(-files.length); }
+}
+function deleteVehiculePhoto(vehiculeId, photoId){
+  const v = getVehicule(vehiculeId); if(!v || !v.photos) return;
+  v.photos = v.photos.filter(p=>p.id!==photoId);
+  saveDB(); render();
+}
+function openPhotoLightbox(photoId){
+  let dataUrl = null;
+  for(const v of db.vehicules){ const p = (v.photos||[]).find(x=>x.id===photoId); if(p){ dataUrl = p.dataUrl; break; } }
+  if(!dataUrl) return;
+  const div = document.createElement('div');
+  div.className = 'photo-lightbox';
+  div.onclick = ()=>div.remove();
+  div.innerHTML = `<button class="close-lb" onclick="event.stopPropagation(); this.closest('.photo-lightbox').remove()">✕</button><img src="${dataUrl}">`;
+  document.body.appendChild(div);
+}
+
 function findFicheFor(v){
   if(!v) return null;
   return db.fichesTechniques.find(f=>f.marque.toLowerCase()===String(v.marque||'').toLowerCase() && f.modele.toLowerCase()===String(v.modele||'').toLowerCase());
@@ -1247,6 +1458,17 @@ function viewVehiculeDetail(root){
           </div>
         ` : `<div class="empty" style="padding:16px;">Aucune fiche technique pour ${esc(v.marque)} ${esc(v.modele)}.<br><button class="btn btn-sm" style="margin-top:10px;" onclick="go('ficheEdit',{presetMarque:'${esc(v.marque)}', presetModele:'${esc(v.modele)}'})">${icoPlus()} Créer la fiche pour ce modèle</button></div>`}
       </div>
+    </div>
+    <div class="card" style="margin-top:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3>Photos du véhicule</h3>
+        <label class="btn btn-sm btn-primary" style="cursor:pointer;">${icoPlus()} Ajouter des photos<input type="file" accept="image/*" multiple style="display:none" onchange="addVehiculePhotos('${v.id}', this)"></label>
+      </div>
+      ${(v.photos && v.photos.length>0) ? `<div class="photo-grid">${v.photos.map(p=>`
+        <div class="photo-thumb" onclick="openPhotoLightbox('${p.id}')">
+          <img src="${p.dataUrl}" alt="Photo véhicule">
+          <button class="photo-del" onclick="event.stopPropagation(); deleteVehiculePhoto('${v.id}','${p.id}')">✕</button>
+        </div>`).join('')}</div>` : `<div class="empty" style="padding:16px;">Aucune photo. Ajoute des photos d'état des lieux, avant/après intervention, ou de dommages constatés.</div>`}
     </div>
     <div class="card" style="margin-top:14px;">
       <h3 style="margin-bottom:10px;">Carnet d'entretien</h3>
@@ -1545,12 +1767,15 @@ function viewFacturesList(root){
       <div class="grow"><input class="search" id="facturesSearchInput" placeholder="Rechercher une facture…" value="${esc(state.params.q||'')}" oninput="filterFactures(this.value)"></div>
       <button class="btn btn-primary" onclick="go('factureEdit',{})">${icoPlus()} Nouvelle facture</button>
     </div>
-    <div class="table-wrap"><table><thead><tr><th>N°</th><th>Client</th><th>Véhicule</th><th>Date</th><th class="num">Total TTC</th><th>Statut</th></tr></thead><tbody id="facturesBody"></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr>${thSort('factures','numero','N°')}${thSort('factures','client','Client')}<th>Véhicule</th>${thSort('factures','date','Date')}${thSort('factures','montant','Total TTC')}${thSort('factures','statut','Statut')}</tr></thead><tbody id="facturesBody"></tbody></table></div>
   `;
   filterFactures(state.params.q||'');
 }
 function buildFacturesRows(q){
-  const list = db.factures.filter(f=>!q || (f.numero+' '+clientLabel(getClient(f.clientId))).toLowerCase().includes(q.toLowerCase())).sort((a,b)=>b.date.localeCompare(a.date));
+  let list = db.factures.filter(f=>!q || (f.numero+' '+clientLabel(getClient(f.clientId))).toLowerCase().includes(q.toLowerCase()));
+  if(sortState.factures && sortState.factures.key){
+    list = applySort('factures', list, {numero:f=>f.numero, client:f=>clientLabel(getClient(f.clientId)).toLowerCase(), date:f=>f.date, montant:f=>docTotals(f).ttc, statut:f=>f.statut});
+  } else { list = list.slice().sort((a,b)=>b.date.localeCompare(a.date)); }
   if(list.length===0) return `<tr><td colspan="6"><div class="empty">${icoInbox()}<div>Aucune facture. Créez-en une pour commencer.</div></div></td></tr>`;
   return list.map(f=>`<tr class="${isEnRetard(f)?'retard-row':''}" onclick="go('factureEdit',{id:'${f.id}'})">
       <td><strong>${esc(f.numero)}</strong></td><td>${esc(clientLabel(getClient(f.clientId)))}</td><td>${esc(vehiculeLabel(getVehicule(f.vehiculeId)))}</td>
@@ -1605,7 +1830,7 @@ function renderDocEditor(root, type){
     <div class="card">
       <div class="doc-head">
         <div>
-          <div class="doc-num">${doc.numero || (isFacture?'Nouvelle facture':'Nouveau devis')} ${enRetard?'<span class="pill pill-bad" style="margin-left:8px;">En retard</span>':''}</div>
+          <div class="doc-num">${doc.numero || (isFacture?'Nouvelle facture':'Nouveau devis')} ${enRetard?'<span class="pill pill-bad" style="margin-left:8px;">En retard</span>':''} ${doc.signature?'<span class="pill pill-good" style="margin-left:8px;">✍️ Signé</span>':''}</div>
           <div class="doc-status-row">
             ${isFacture ? `
               <select id="fStatut" onchange="render()" style="padding:5px 8px; border-radius:6px; border:1px solid var(--border);">
@@ -1623,6 +1848,7 @@ function renderDocEditor(root, type){
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-start;">
           ${(!isFacture && doc.id && doc.statut!=='facture') ? `<button class="btn" onclick="convertDevisToFacture('${doc.id}')">Convertir en facture</button>` : ''}
+          ${doc.id ? `<button class="btn" onclick="duplicateDoc('${type}','${doc.id}')">${icoPlus()} Dupliquer</button>` : ''}
           ${doc.id ? `<button class="btn" onclick="printDoc('${type}','${doc.id}')">${icoPrint()} Imprimer / PDF</button>` : ''}
           ${(isFacture && doc.id) ? `<button class="btn" onclick="generateFacturX('${doc.id}')">${icoShield()} Facture électronique (Factur-X)</button>` : ''}
           ${doc.id ? `<button class="btn btn-danger" onclick="deleteDoc('${type}','${doc.id}')">${icoTrash()} Supprimer</button>` : ''}
@@ -1664,6 +1890,7 @@ function renderDocEditor(root, type){
       <div class="totals-box" id="totalsBox"></div>
 
       ${isFacture && doc.id && doc.statut!=='payee' ? renderRelancesBox(doc) : ''}
+      ${!isFacture ? renderSignatureBox('devis', doc) : ''}
 
       <div class="modal-actions" style="border-top:1px solid var(--border);">
         <button class="btn" onclick="go('${isFacture?'factures':'devis'}')">Annuler</button>
@@ -1673,6 +1900,72 @@ function renderDocEditor(root, type){
   `;
   renderLignes();
 }
+/* =========================================================================
+   SIGNATURE ÉLECTRONIQUE — "bon pour accord" client sur les devis
+   ========================================================================= */
+let sigCtx = null, sigDrawing = false, sigHasStroke = false, sigLastPos = null;
+function initSignaturePad(){
+  const canvas = document.getElementById('sigCanvas');
+  if(!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr; canvas.height = 150 * dpr;
+  sigCtx = canvas.getContext('2d');
+  sigCtx.scale(dpr, dpr);
+  sigCtx.strokeStyle = '#15181C'; sigCtx.lineWidth = 2.2; sigCtx.lineCap = 'round'; sigCtx.lineJoin = 'round';
+  sigHasStroke = false;
+  const getPos = (ev)=>{ const r = canvas.getBoundingClientRect(); const t = ev.touches ? ev.touches[0] : ev; return {x: t.clientX - r.left, y: t.clientY - r.top}; };
+  const start = (ev)=>{ ev.preventDefault(); sigDrawing = true; sigLastPos = getPos(ev); };
+  const move = (ev)=>{ if(!sigDrawing) return; ev.preventDefault(); const p = getPos(ev); sigCtx.beginPath(); sigCtx.moveTo(sigLastPos.x, sigLastPos.y); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); sigLastPos = p; sigHasStroke = true; };
+  const end = ()=>{ sigDrawing = false; };
+  canvas.onpointerdown = start; canvas.onpointermove = move; canvas.onpointerup = end; canvas.onpointerleave = end;
+  canvas.ontouchstart = start; canvas.ontouchmove = move; canvas.ontouchend = end;
+}
+function clearSignaturePad(){
+  const canvas = document.getElementById('sigCanvas'); if(!canvas || !sigCtx) return;
+  sigCtx.clearRect(0,0,canvas.width,canvas.height); sigHasStroke = false;
+}
+function saveSignature(docType, docId){
+  if(!sigHasStroke){ toast('Fais signer avant de valider.'); return; }
+  const canvas = document.getElementById('sigCanvas');
+  const dataUrl = canvas.toDataURL('image/png');
+  const collection = docType==='facture' ? db.factures : db.devis;
+  const doc = collection.find(x=>x.id===docId);
+  if(!doc){ toast('Enregistre le document avant de signer.'); return; }
+  doc.signature = dataUrl; doc.signatureDate = TODAY();
+  if(docType==='devis' && doc.statut==='brouillon') doc.statut = 'accepte';
+  saveDB(); toast('Signature enregistrée.'); render();
+}
+function removeSignature(docType, docId){
+  if(!confirm('Supprimer la signature ?')) return;
+  const collection = docType==='facture' ? db.factures : db.devis;
+  const doc = collection.find(x=>x.id===docId);
+  if(!doc) return;
+  delete doc.signature; delete doc.signatureDate;
+  saveDB(); render();
+}
+function renderSignatureBox(docType, doc){
+  if(!doc.id) return `<div class="card" style="margin-top:18px;"><p style="font-size:12.5px; color:var(--ink-soft); margin:0;">Enregistre d'abord ce document pour pouvoir recueillir la signature du client.</p></div>`;
+  if(doc.signature){
+    return `<div class="card" style="margin-top:18px;">
+      <h4 style="margin-bottom:10px;">Signature client</h4>
+      <div class="sig-captured"><img src="${doc.signature}" alt="Signature"></div>
+      <p style="font-size:11.5px; color:var(--ink-faint); margin:8px 0 0 0;">Bon pour accord signé le ${fdate(doc.signatureDate)}.</p>
+      <button class="btn btn-sm btn-danger" style="margin-top:10px;" onclick="removeSignature('${docType}','${doc.id}')">${icoTrash()} Effacer la signature</button>
+    </div>`;
+  }
+  setTimeout(initSignaturePad, 0);
+  return `<div class="card" style="margin-top:18px;">
+    <h4 style="margin-bottom:6px;">Signature client — bon pour accord</h4>
+    <p style="font-size:12px; color:var(--ink-soft); margin:0 0 10px 0;">Fais signer directement à l'écran (souris, doigt ou stylet), puis valide.</p>
+    <div class="sig-pad-wrap"><canvas id="sigCanvas"></canvas></div>
+    <div style="display:flex; gap:8px; margin-top:10px;">
+      <button type="button" class="btn btn-sm" onclick="clearSignaturePad()">Effacer</button>
+      <button type="button" class="btn btn-sm btn-primary" onclick="saveSignature('${docType}','${doc.id}')">Valider la signature</button>
+    </div>
+  </div>`;
+}
+
 function renderRelancesBox(doc){
   const total = docTotals(doc).ttc;
   const reste = Math.max(total-(doc.montantPaye||0),0);
@@ -1814,6 +2107,24 @@ function deleteDoc(type, id){
   else { db.devis = db.devis.filter(d=>d.id!==id); go('devis'); }
   saveDB();
 }
+function duplicateDoc(type, id){
+  const isFacture = type==='facture';
+  const collection = isFacture ? db.factures : db.devis;
+  const src = collection.find(x=>x.id===id); if(!src) return;
+  const copy = JSON.parse(JSON.stringify(src));
+  copy.id = uid(isFacture?'fac':'dev');
+  copy.numero = nextNumero(type);
+  copy.date = TODAY();
+  copy.creePar = (getSessionUser()||{}).nom||'';
+  copy.relances = [];
+  delete copy.signature; delete copy.signatureDate;
+  if(isFacture){ copy.statut = 'impayee'; copy.montantPaye = 0; copy.dateEcheance = addDays(TODAY(),30); }
+  else { copy.statut = 'brouillon'; }
+  collection.push(copy);
+  saveDB();
+  toast((isFacture?'Facture':'Devis') + ' dupliqué' + (isFacture?'e':'') + ' — pense à vérifier le client et les quantités.');
+  go(isFacture?'factureEdit':'devisEdit', {id: copy.id});
+}
 function convertDevisToFacture(devisId){
   const d = db.devis.find(x=>x.id===devisId); if(!d) return;
   const f = {id: uid('fac'), numero: nextNumero('facture'), date: TODAY(), dateEcheance: addDays(TODAY(),30), clientId: d.clientId, vehiculeId: d.vehiculeId, devisId: d.id, statut:'impayee', montantPaye:0, remise: d.remise, remiseType: d.remiseType, notes: d.notes, lignes: JSON.parse(JSON.stringify(d.lignes)), relances:[], creePar:(getSessionUser()||{}).nom||''};
@@ -1866,6 +2177,7 @@ function printDoc(type, id){
       ${type==='facture'?`<div class="row"><span>Réglé</span><span>${money(doc.montantPaye||0)}</span></div><div class="row"><span>Restant dû</span><span>${money(Math.max(t.ttc-(doc.montantPaye||0),0))}</span></div>`:''}
     </div>
     ${doc.notes?`<div style="margin-top:18px; font-size:12px; white-space:pre-wrap;"><strong>Notes :</strong> ${esc(doc.notes)}</div>`:''}
+    ${doc.signature?`<div style="margin-top:20px;"><div style="font-size:11px; color:#555; margin-bottom:4px;">Bon pour accord — signé le ${fdate(doc.signatureDate)}</div><img src="${doc.signature}" style="max-height:70px; border:1px solid #ddd; border-radius:4px;"></div>`:''}
     <div class="p-foot">${esc(s.mentions||'')}</div>
   `;
   setTimeout(()=>window.print(), 60);
