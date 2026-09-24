@@ -382,9 +382,12 @@ th.sortable.sorted .arrow{opacity:1; color:var(--accent);}
 </div>
 <div id="plateScreen" class="scan-screen">
   <div class="scan-top"><strong>Scanner une plaque</strong><button onclick="closePlateScanner()">✕</button></div>
-  <video id="plateVideo" autoplay playsinline muted style="flex:1 1 0%; min-height:0; width:100%; object-fit:cover; display:block;"></video>
+  <div id="plateVideoWrap" style="position:relative; flex:1 1 0%; min-height:0; overflow:hidden;">
+    <video id="plateVideo" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; display:block;"></video>
+    <div id="plateGuide" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:80%; aspect-ratio:4.7/1; border:3px solid #fff; border-radius:8px; box-shadow:0 0 0 1500px rgba(0,0,0,.4); pointer-events:none;"></div>
+  </div>
   <canvas id="plateCanvas" style="display:none;"></canvas>
-  <div id="plateHint" style="text-align:center; color:#fff; font-size:12.5px; padding:8px 20px; background:rgba(0,0,0,.5);">Cadre la plaque bien à plat et éclairée, puis appuie sur le déclencheur.</div>
+  <div id="plateHint" style="text-align:center; color:#fff; font-size:12.5px; padding:8px 20px; background:rgba(0,0,0,.5);">Cadre la plaque dans le rectangle, bien à plat et éclairée, puis appuie sur le déclencheur.</div>
   <div style="display:flex; justify-content:center; padding:20px; padding-bottom:calc(20px + env(safe-area-inset-bottom,0px)); background:rgba(0,0,0,.4); flex:0 0 auto;">
     <button onclick="capturePlate()" style="width:68px; height:68px; border-radius:50%; background:#fff; border:4px solid rgba(255,255,255,.4); cursor:pointer;"></button>
   </div>
@@ -1382,12 +1385,39 @@ function closePlateScanner(){
 async function capturePlate(){
   const video = document.getElementById('plateVideo');
   if(!video.videoWidth){ toast('La caméra ne semble pas prête, réessaie dans une seconde.'); return; }
-  const canvas = document.getElementById('plateCanvas');
-  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-  canvas.getContext('2d').drawImage(video, 0, 0);
   document.getElementById('plateHint').textContent = 'Lecture de la plaque en cours…';
+
+  // 1) Calculer la zone exacte visée par le cadre blanc (et pas toute l'image)
+  const wrap = document.getElementById('plateVideoWrap');
+  const guide = document.getElementById('plateGuide');
+  const containerW = wrap.clientWidth, containerH = wrap.clientHeight;
+  const videoW = video.videoWidth, videoH = video.videoHeight;
+  const scale = Math.max(containerW / videoW, containerH / videoH); // object-fit: cover
+  const displayedW = videoW * scale, displayedH = videoH * scale;
+  const offsetX = (displayedW - containerW) / 2, offsetY = (displayedH - containerH) / 2;
+  const guideW = containerW * 0.80, guideH = guideW / 4.7;
+  const guideLeft = (containerW - guideW) / 2, guideTop = (containerH - guideH) / 2;
+  const srcX = (guideLeft + offsetX) / scale, srcY = (guideTop + offsetY) / scale;
+  const srcW = guideW / scale, srcH = guideH / scale;
+
+  // 2) Découper cette zone et l'agrandir pour donner plus de matière à l'OCR
+  const canvas = document.getElementById('plateCanvas');
+  const destW = 900, destH = Math.round(900 / 4.7);
+  canvas.width = destW; canvas.height = destH;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, destW, destH);
+
+  // 3) Nettoyage d'image : niveaux de gris + étirement du contraste
+  preprocessForOcr(canvas);
+
   try{
-    const result = await Tesseract.recognize(canvas, 'eng');
+    const worker = await Tesseract.createWorker('eng');
+    await worker.setParameters({
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
+      tessedit_pageseg_mode: '7' // une seule ligne de texte
+    });
+    const result = await worker.recognize(canvas);
+    await worker.terminate();
     closePlateScanner();
     const candidate = extractPlateCandidate(result.data.text || '');
     showPlateConfirm(candidate);
@@ -1395,6 +1425,23 @@ async function capturePlate(){
     console.warn('Erreur OCR plaque', e);
     document.getElementById('plateHint').textContent = 'Échec de la lecture — réessaie avec une photo plus nette.';
   }
+}
+function preprocessForOcr(canvas){
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imgData.data;
+  const gray = new Float32Array(d.length / 4);
+  let min = 255, max = 0;
+  for(let i=0, j=0; i<d.length; i+=4, j++){
+    const g = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+    gray[j] = g; if(g<min) min=g; if(g>max) max=g;
+  }
+  const range = Math.max(1, max-min);
+  for(let i=0, j=0; i<d.length; i+=4, j++){
+    const v = Math.round(((gray[j]-min)/range) * 255);
+    d[i] = d[i+1] = d[i+2] = v;
+  }
+  ctx.putImageData(imgData, 0, 0);
 }
 function normalizePlate(s){ return (s||'').toUpperCase().replace(/[^A-Z0-9]/g,''); }
 function extractPlateCandidate(rawText){
