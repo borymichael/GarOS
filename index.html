@@ -314,7 +314,15 @@ th.sortable:hover{color:var(--ink);}
 th.sortable .arrow{opacity:.4; font-size:9px; margin-left:3px;}
 th.sortable.sorted .arrow{opacity:1; color:var(--accent);}
 
-/* mobile : tableaux -> cartes tactiles, zones de clic agrandies */
+/* scanner de codes-barres */
+.scan-screen{position:fixed; inset:0; background:#000; z-index:500; display:none; flex-direction:column;}
+.scan-screen.open{display:flex;}
+.scan-top{display:flex; justify-content:space-between; align-items:center; padding:14px 16px; padding-top:calc(14px + env(safe-area-inset-top,0px)); color:#fff; background:rgba(0,0,0,.4); position:relative; z-index:2;}
+.scan-top button{background:rgba(255,255,255,.15); border:none; color:#fff; border-radius:50%; width:38px; height:38px; font-size:18px; cursor:pointer;}
+#scanReader{flex:1; position:relative;}
+#scanReader video{width:100% !important; height:100% !important; object-fit:cover;}
+.scan-hint{position:absolute; bottom:24px; left:0; right:0; text-align:center; color:#fff; font-size:13px; padding:0 20px; text-shadow:0 1px 4px rgba(0,0,0,.6); z-index:2;}
+.scan-status{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; font-size:14px; text-align:center; padding:30px; z-index:1;}
 @media(max-width:640px){
   .table-wrap.responsive-cards thead{ display:none; }
   .table-wrap.responsive-cards table, .table-wrap.responsive-cards tbody, .table-wrap.responsive-cards tr, .table-wrap.responsive-cards td{ display:block; width:100%; }
@@ -367,9 +375,15 @@ th.sortable.sorted .arrow{opacity:1; color:var(--accent);}
 </div>
 <div id="loginScreen" class="login-screen"></div>
 <div id="onboardScreen" class="onboard-screen" style="display:none;"></div>
+<div id="scanScreen" class="scan-screen">
+  <div class="scan-top"><strong id="scanTitle">Scanner un code-barres</strong><button onclick="closeScanner()">✕</button></div>
+  <div id="scanReader"></div>
+  <div class="scan-hint" id="scanHint">Cadre le code-barres dans l'écran.</div>
+</div>
 <div id="modalRoot"></div>
 <div id="print-area"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <script>
 /* =========================================================================
@@ -1503,6 +1517,66 @@ function viewVehiculeDetail(root){
    partir de ses propres sources professionnelles (RTA, ETAI, documentation
    constructeur). GarageOS ne fournit aucune valeur technique par défaut.
    ========================================================================= */
+/* =========================================================================
+   SCANNER DE CODES-BARRES — ajout rapide de pièces au catalogue/stock
+   Utilise la caméra du téléphone (bibliothèque html5-qrcode). Fonctionne
+   sur HTTPS, avec autorisation caméra par le navigateur au premier usage.
+   ========================================================================= */
+let scannerInstance = null;
+let scannerCallback = null;
+function openScanner(title, callback){
+  if(typeof Html5Qrcode === 'undefined'){ toast("Le module de scan n'a pas pu se charger — vérifie ta connexion internet et réessaie."); return; }
+  scannerCallback = callback;
+  document.getElementById('scanTitle').textContent = title || 'Scanner un code-barres';
+  document.getElementById('scanHint').textContent = 'Cadre le code-barres dans l\'écran.';
+  document.getElementById('scanScreen').classList.add('open');
+  scannerInstance = new Html5Qrcode('scanReader');
+  const config = { fps: 12, qrbox: (w,h)=>({width: Math.min(w*0.85, 320), height: Math.min(h*0.35, 160)}), formatsToSupport: (typeof Html5QrcodeSupportedFormats!=='undefined') ? [
+    Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
+    Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.QR_CODE
+  ] : undefined };
+  scannerInstance.start({ facingMode: 'environment' }, config,
+    (decodedText)=>{ onBarcodeDetected(decodedText); },
+    ()=>{ /* erreurs de décodage image par image : normal, on ignore */ }
+  ).catch(err=>{
+    document.getElementById('scanHint').innerHTML = "Impossible d'accéder à la caméra. Vérifie que tu as autorisé l'accès caméra pour ce site, puis réessaie.";
+    console.warn('Erreur caméra scanner', err);
+  });
+}
+function onBarcodeDetected(code){
+  if(!scannerCallback) return;
+  const cb = scannerCallback; scannerCallback = null;
+  if(navigator.vibrate) try{ navigator.vibrate(80); }catch(e){}
+  closeScanner();
+  cb(code);
+}
+function closeScanner(){
+  document.getElementById('scanScreen').classList.remove('open');
+  if(scannerInstance){
+    scannerInstance.stop().then(()=>scannerInstance.clear()).catch(()=>{});
+    scannerInstance = null;
+  }
+  scannerCallback = null;
+}
+function scanForCatalogue(){
+  openScanner('Scanner une pièce', (code)=>{
+    const existing = db.pieces.find(p=>p.codeBarre===code);
+    if(existing){
+      toast(`Pièce reconnue : ${existing.designation}`);
+      openPieceForm(existing.id);
+    } else {
+      toast('Nouvelle pièce — code-barres pré-rempli.');
+      openPieceForm(null, code);
+    }
+  });
+}
+function scanForField(inputId){
+  openScanner('Scanner un code', (code)=>{
+    const el = document.getElementById(inputId);
+    if(el){ el.value = code; el.dispatchEvent(new Event('input')); }
+  });
+}
+
 function viewFichesList(root){
   root.innerHTML = `
     <div class="toolbar">
@@ -1634,6 +1708,7 @@ function renderPiecesTab(root){
   root.innerHTML = `
     <div class="toolbar">
       <div class="grow"><input class="search" id="piecesSearchInput" placeholder="Rechercher une pièce (désignation, code, fournisseur)…" value="${esc(state.params.q||'')}" oninput="filterPieces(this.value)"></div>
+      <button class="btn" onclick="scanForCatalogue()">${icoBox()} Scanner</button>
       <button class="btn btn-primary" onclick="openPieceForm()">${icoPlus()} Nouvelle pièce</button>
     </div>
     <div class="table-wrap responsive-cards"><table>
@@ -1657,8 +1732,8 @@ function buildPiecesRows(q){
   }).join('');
 }
 function filterPieces(q){ state.params.q = q; const body = document.getElementById('stockBody'); if(body) body.innerHTML = buildPiecesRows(q); }
-function openPieceForm(id){
-  const p = id ? db.pieces.find(x=>x.id===id) : {id:null, ref:'', designation:'', fournisseur:'', prixAchat:'', prixVente:'', stock:0, seuil:2};
+function openPieceForm(id, presetBarcode){
+  const p = id ? db.pieces.find(x=>x.id===id) : {id:null, ref:'', codeBarre:presetBarcode||'', designation:'', fournisseur:'', prixAchat:'', prixVente:'', stock:0, seuil:2};
   openModal(`
     <div class="modal-head"><h3>${id?'Modifier la pièce':'Nouvelle pièce'}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
     <form onsubmit="return submitPieceForm(event,'${id||''}')">
@@ -1667,6 +1742,12 @@ function openPieceForm(id){
         <div class="field"><label>Fournisseur</label><input id="pFournisseur" list="fournisseursDatalist" value="${esc(p.fournisseur)}"></div>
       </div>
       <datalist id="fournisseursDatalist">${db.fournisseurs.map(fo=>`<option value="${esc(fo.nom)}">`).join('')}</datalist>
+      <div class="field"><label>Code-barres</label>
+        <div style="display:flex; gap:8px;">
+          <input id="pCodeBarre" placeholder="ex: 3600550123456" value="${esc(p.codeBarre||'')}" style="flex:1;">
+          <button type="button" class="btn btn-sm" onclick="scanForField('pCodeBarre')">${icoBox()} Scanner</button>
+        </div>
+      </div>
       <div class="field"><label>Désignation</label><input id="pDesignation" required value="${esc(p.designation)}"></div>
       <div class="field-row cols-2">
         <div class="field"><label>Prix d'achat HT (€)</label><input id="pPrixAchat" type="number" step="0.01" value="${esc(p.prixAchat)}"></div>
@@ -1686,7 +1767,7 @@ function openPieceForm(id){
 }
 function submitPieceForm(ev,id){
   ev.preventDefault();
-  const data = {ref:val('pRef'), designation:val('pDesignation'), fournisseur:val('pFournisseur'), prixAchat:parseFloat(val('pPrixAchat'))||0, prixVente:parseFloat(val('pPrixVente'))||0, stock:parseInt(val('pStock'))||0, seuil:parseInt(val('pSeuil'))||0};
+  const data = {ref:val('pRef'), codeBarre:val('pCodeBarre'), designation:val('pDesignation'), fournisseur:val('pFournisseur'), prixAchat:parseFloat(val('pPrixAchat'))||0, prixVente:parseFloat(val('pPrixVente'))||0, stock:parseInt(val('pStock'))||0, seuil:parseInt(val('pSeuil'))||0};
   if(id){ Object.assign(db.pieces.find(x=>x.id===id), data); toast('Pièce mise à jour.'); }
   else { data.id = uid('pce'); db.pieces.push(data); toast('Pièce ajoutée au catalogue.'); }
   if(Number(data.stock) <= Number(data.seuil)){ const fr=findFournisseurByName(data.fournisseur); sendAutomation('stock_bas', {designation_piece:data.designation, code_piece:data.ref||'', stock_actuel:String(data.stock), seuil:String(data.seuil), fournisseur_nom:data.fournisseur||'', fournisseur_email: fr?fr.email:''}); }
