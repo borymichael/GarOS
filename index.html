@@ -380,10 +380,20 @@ th.sortable.sorted .arrow{opacity:1; color:var(--accent);}
   <div id="scanReader"></div>
   <div class="scan-hint" id="scanHint">Cadre le code-barres dans l'écran.</div>
 </div>
+<div id="plateScreen" class="scan-screen">
+  <div class="scan-top"><strong>Scanner une plaque</strong><button onclick="closePlateScanner()">✕</button></div>
+  <video id="plateVideo" autoplay playsinline muted style="flex:1; width:100%; object-fit:cover;"></video>
+  <canvas id="plateCanvas" style="display:none;"></canvas>
+  <div class="scan-hint" id="plateHint">Cadre la plaque bien à plat et éclairée, puis appuie sur le déclencheur.</div>
+  <div style="display:flex; justify-content:center; padding:20px; padding-bottom:calc(20px + env(safe-area-inset-bottom,0px)); background:rgba(0,0,0,.4);">
+    <button onclick="capturePlate()" style="width:68px; height:68px; border-radius:50%; background:#fff; border:4px solid rgba(255,255,255,.4); cursor:pointer;"></button>
+  </div>
+</div>
 <div id="modalRoot"></div>
 <div id="print-area"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <script>
 /* =========================================================================
@@ -1001,6 +1011,10 @@ function viewDashboard(root){
   const rdvUpcoming = db.rdv.filter(r=>r.date>TODAY() && r.statut!=='annule').sort((a,b)=>(a.date+a.heure).localeCompare(b.date+b.heure)).slice(0,5);
   const ctSoon = db.vehicules.filter(v=>v.prochainCT).filter(v=>{ const j = Math.round((new Date(v.prochainCT+'T00:00:00') - new Date(TODAY()+'T00:00:00'))/86400000); return j<=30; }).sort((a,b)=>a.prochainCT.localeCompare(b.prochainCT));
   root.innerHTML = `
+    <div class="toolbar" style="margin-bottom:16px;">
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" onclick="openPlateScanner()">📷 Un véhicule arrive — scanner sa plaque</button>
+    </div>
     <div class="grid stat-grid">
       <div class="stat good"><div class="label">CA encaissé — ${monthLabel(now)}</div><div class="value">${money(caMois)}</div><div class="hint">factures payées ce mois-ci</div></div>
       <div class="stat ${montantImpaye>0?'bad':''}"><div class="label">Impayés</div><div class="value">${money(montantImpaye)}</div><div class="hint">${impayees.length} facture(s)</div></div>
@@ -1022,7 +1036,7 @@ function viewDashboard(root){
         <div class="card">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;"><h3>Aujourd'hui</h3><button class="btn btn-sm" onclick="go('planning')">Planning</button></div>
           ${rdvToday.length===0?`<div class="empty" style="padding:14px;">Aucun rendez-vous aujourd'hui.</div>`:
-            rdvToday.map(r=>`<div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border); font-size:12.8px;"><span><strong>${esc(r.heure)}</strong> · ${esc(clientLabel(getClient(r.clientId)))}</span>${rdvStatutPill(r)}</div>`).join('')}
+            rdvToday.map(r=>`<div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border); font-size:12.8px;"><span><strong>${esc(r.heure)}</strong> · ${esc(rdvClientLabel(r))}</span>${rdvStatutPill(r)}</div>`).join('')}
         </div>
         <div class="card">
           <h3 style="margin-bottom:10px;">Alertes stock</h3>
@@ -1034,7 +1048,7 @@ function viewDashboard(root){
     ${rdvUpcoming.length>0?`<div class="card" style="margin-top:14px;">
       <h3 style="margin-bottom:10px;">Prochains rendez-vous</h3>
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Heure</th><th>Client</th><th>Véhicule</th><th>Motif</th></tr></thead><tbody>
-      ${rdvUpcoming.map(r=>`<tr onclick="go('planning',{weekStart:'${mondayOf(r.date)}'})"><td>${fdate(r.date)}</td><td>${esc(r.heure)}</td><td>${esc(clientLabel(getClient(r.clientId)))}</td><td>${esc(vehiculeLabel(getVehicule(r.vehiculeId)))}</td><td>${esc(r.motif||'—')}</td></tr>`).join('')}
+      ${rdvUpcoming.map(r=>`<tr onclick="go('planning',{weekStart:'${mondayOf(r.date)}'})"><td>${fdate(r.date)}</td><td>${esc(r.heure)}</td><td>${esc(rdvClientLabel(r))}</td><td>${esc(vehiculeLabel(getVehicule(r.vehiculeId)))}</td><td>${esc(r.motif||'—')}</td></tr>`).join('')}
       </tbody></table></div>
     </div>`:''}
   `;
@@ -1086,7 +1100,7 @@ function viewPlanning(root){
         return `<div class="day-col ${isToday?'today':''}">
           <div class="day-col-head"><span class="dname">${noms[i]}</span><span class="dnum">${fdate(d).slice(0,5)}</span></div>
           <div class="day-col-body">
-            ${dayRdv.length===0?'':dayRdv.map(r=>`<div class="rdv-card" onclick="openRdvForm('${r.id}')"><div class="rt">${esc(r.heure)}</div><div>${esc(clientLabel(getClient(r.clientId)))}</div>${r.motif?`<div style="color:var(--ink-faint);">${esc(r.motif)}</div>`:''}</div>`).join('')}
+            ${dayRdv.length===0?'':dayRdv.map(r=>`<div class="rdv-card" onclick="openRdvForm('${r.id}')"><div class="rt">${esc(r.heure)}</div><div>${esc(rdvClientLabel(r))}</div>${r.motif?`<div style="color:var(--ink-faint);">${esc(r.motif)}</div>`:''}</div>`).join('')}
             <button class="day-add" onclick="openRdvForm(null,'${d}')">+ Ajouter</button>
           </div>
         </div>`;
@@ -1095,15 +1109,18 @@ function viewPlanning(root){
   `;
 }
 function openRdvForm(id, presetDate){
-  const r = id ? db.rdv.find(x=>x.id===id) : {id:null, date: presetDate||TODAY(), heure: NOW_HM(), duree:60, clientId:'', vehiculeId:'', motif:'', statut:'planifie', notes:''};
-  if(db.clients.length===0){ toast('Créez d\'abord un client.'); return; }
+  const r = id ? db.rdv.find(x=>x.id===id) : {id:null, date: presetDate||TODAY(), heure: NOW_HM(), duree:60, clientId:'', clientLibre:'', vehiculeId:'', motif:'', statut:'planifie', notes:''};
   openModal(`
     <div class="modal-head"><h3>${id?'Modifier le rendez-vous':'Nouveau rendez-vous'}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
     <form onsubmit="return submitRdvForm(event,'${id||''}')">
-      <div class="field"><label>Client</label>
-        <select id="rClient" required onchange="document.getElementById('rVehicule').innerHTML = vehiculeOptionsFor(this.value, null)">
-          <option value="">— Choisir —</option>${db.clients.map(c=>`<option value="${c.id}" ${r.clientId===c.id?'selected':''}>${esc(clientLabel(c))}</option>`).join('')}
+      <div class="field"><label>Client enregistré (facultatif)</label>
+        <select id="rClient" onchange="document.getElementById('rVehicule').innerHTML = vehiculeOptionsFor(this.value, null); document.getElementById('rClientLibreWrap').style.display = this.value ? 'none' : 'block';">
+          <option value="">— Aucun / pas encore enregistré —</option>${db.clients.map(c=>`<option value="${c.id}" ${r.clientId===c.id?'selected':''}>${esc(clientLabel(c))}</option>`).join('')}
         </select>
+      </div>
+      <div class="field" id="rClientLibreWrap" style="display:${r.clientId?'none':'block'}">
+        <label>Ou nom du client (si pas encore enregistré)</label>
+        <input id="rClientLibre" placeholder="ex : M. Martin (nouveau)" value="${esc(r.clientLibre||'')}">
       </div>
       <div class="field"><label>Véhicule</label><select id="rVehicule">${vehiculeOptionsFor(r.clientId, r.vehiculeId)}</select></div>
       <div class="field-row cols-3">
@@ -1129,13 +1146,14 @@ function openRdvForm(id, presetDate){
     </form>
   `);
 }
+function rdvClientLabel(r){ return r.clientId ? clientLabel(getClient(r.clientId)) : (r.clientLibre || 'Sans client'); }
 function submitRdvForm(ev,id){
   ev.preventDefault();
-  const data = {clientId:val('rClient'), vehiculeId:val('rVehicule'), date:val('rDate'), heure:val('rHeure'), duree:parseInt(val('rDuree'))||60, motif:val('rMotif'), statut:val('rStatut'), notes:val('rNotes')};
+  const data = {clientId:val('rClient'), clientLibre: val('rClientLibre'), vehiculeId:val('rVehicule'), date:val('rDate'), heure:val('rHeure'), duree:parseInt(val('rDuree'))||60, motif:val('rMotif'), statut:val('rStatut'), notes:val('rNotes')};
   if(id){ Object.assign(db.rdv.find(x=>x.id===id), data); toast('Rendez-vous mis à jour.'); }
   else { data.id = uid('rdv'); data.creePar = (getSessionUser()||{}).nom||''; db.rdv.push(data); toast('Rendez-vous ajouté.');
     const c = getClient(data.clientId); const v = getVehicule(data.vehiculeId);
-    sendAutomation('nouveau_rdv', {client: clientLabel(c), client_email: c?.email||'', client_telephone: c?.tel||'', vehicule: vehiculeLabel(v), immat: v?.immat||'', date: data.date, heure: data.heure, motif: data.motif});
+    sendAutomation('nouveau_rdv', {client: rdvClientLabel(data), client_email: c?.email||'', client_telephone: c?.tel||'', vehicule: vehiculeLabel(v), immat: v?.immat||'', date: data.date, heure: data.heure, motif: data.motif});
   }
   saveDB(); closeModal(); go('planning',{weekStart: mondayOf(data.date)});
 }
@@ -1314,11 +1332,102 @@ function viewVehicules(root){
   root.innerHTML = `
     <div class="toolbar">
       <div class="grow"><input class="search" id="vehSearchInput" placeholder="Rechercher (marque, modèle, immatriculation, client)…" value="${esc(state.params.q||'')}" oninput="filterVehicules(this.value)"></div>
+      <button class="btn" onclick="scanForVehicule()">${icoBox()} Scanner un VIN</button>
+      <button class="btn" onclick="openPlateScanner()">📷 Scanner une plaque</button>
       <button class="btn btn-primary" onclick="openVehiculeForm()">${icoPlus()} Nouveau véhicule</button>
     </div>
     <div class="table-wrap responsive-cards"><table><thead><tr><th>Véhicule</th><th>Immatriculation</th><th>Client</th><th class="num">Km</th><th>Contrôle technique</th></tr></thead><tbody id="vehBody"></tbody></table></div>
   `;
   filterVehicules(state.params.q||'');
+}
+/* =========================================================================
+   SCANNER DE PLAQUE D'IMMATRICULATION — reconnaissance de texte (OCR)
+   -------------------------------------------------------------------------
+   Contrairement aux codes-barres, une plaque est du texte à lire : la
+   fiabilité dépend de la photo (netteté, lumière, angle bien de face).
+   Une confirmation manuelle est toujours proposée avant la recherche pour
+   éviter qu'une lettre mal reconnue fasse échouer la recherche.
+   ========================================================================= */
+let plateStream = null;
+function openPlateScanner(){
+  if(typeof Tesseract === 'undefined'){ toast("Le module de lecture de plaque n'a pas pu se charger — vérifie ta connexion internet et réessaie."); return; }
+  document.getElementById('plateScreen').classList.add('open');
+  document.getElementById('plateHint').textContent = 'Cadre la plaque bien à plat et éclairée, puis appuie sur le déclencheur.';
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: {ideal:1280}, height:{ideal:720} } }).then(stream=>{
+    plateStream = stream;
+    const video = document.getElementById('plateVideo');
+    video.srcObject = stream;
+  }).catch(err=>{
+    document.getElementById('plateHint').textContent = "Impossible d'accéder à la caméra — vérifie l'autorisation dans ton navigateur.";
+    console.warn('Erreur caméra plaque', err);
+  });
+}
+function closePlateScanner(){
+  document.getElementById('plateScreen').classList.remove('open');
+  if(plateStream){ plateStream.getTracks().forEach(t=>t.stop()); plateStream = null; }
+}
+async function capturePlate(){
+  const video = document.getElementById('plateVideo');
+  if(!video.videoWidth){ toast('La caméra ne semble pas prête, réessaie dans une seconde.'); return; }
+  const canvas = document.getElementById('plateCanvas');
+  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  document.getElementById('plateHint').textContent = 'Lecture de la plaque en cours…';
+  try{
+    const result = await Tesseract.recognize(canvas, 'eng');
+    closePlateScanner();
+    const candidate = extractPlateCandidate(result.data.text || '');
+    showPlateConfirm(candidate);
+  }catch(e){
+    console.warn('Erreur OCR plaque', e);
+    document.getElementById('plateHint').textContent = 'Échec de la lecture — réessaie avec une photo plus nette.';
+  }
+}
+function normalizePlate(s){ return (s||'').toUpperCase().replace(/[^A-Z0-9]/g,''); }
+function extractPlateCandidate(rawText){
+  const upper = rawText.toUpperCase();
+  // format SIV actuel : AA-123-AA
+  let m = upper.match(/([A-Z]{2}[\s-]?\d{3}[\s-]?[A-Z]{2})/);
+  if(m) return normalizePlate(m[1]);
+  // ancien format FNI : 1234 AB 56
+  m = upper.match(/(\d{1,4}[\s-]?[A-Z]{1,3}[\s-]?\d{2,3})/);
+  if(m) return normalizePlate(m[1]);
+  // repli : le plus long segment alphanumérique trouvé
+  const tokens = upper.replace(/[^A-Z0-9\s]/g,' ').split(/\s+/).filter(Boolean);
+  return normalizePlate(tokens.sort((a,b)=>b.length-a.length)[0] || '');
+}
+function showPlateConfirm(candidate){
+  openModal(`
+    <div class="modal-head"><h3>Plaque détectée</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <p style="font-size:12.5px; color:var(--ink-soft); margin-top:-6px;">Vérifie et corrige si besoin avant de lancer la recherche — la lecture automatique n'est pas garantie à 100%.</p>
+    <div class="field"><label>Immatriculation lue</label><input id="plateConfirmInput" value="${esc(candidate)}" style="text-transform:uppercase; font-size:20px; text-align:center; font-family:var(--font-head); font-weight:700;"></div>
+    <div class="modal-actions" style="justify-content:space-between;">
+      <button class="btn" onclick="closeModal(); openPlateScanner();">${icoBox()} Reprendre la photo</button>
+      <button class="btn btn-primary" onclick="searchByPlate()">Rechercher le propriétaire</button>
+    </div>
+  `);
+}
+function searchByPlate(){
+  const target = normalizePlate(val('plateConfirmInput'));
+  closeModal();
+  if(!target) return;
+  const v = db.vehicules.find(x=>normalizePlate(x.immat)===target);
+  if(v){
+    const c = getClient(v.clientId);
+    toast(`Véhicule trouvé — propriétaire : ${clientLabel(c)}`);
+    go('vehiculeDetail', {id: v.id});
+  } else {
+    toast("Aucun véhicule connu avec cette plaque dans GarageOS.");
+    go('vehicules', {q: target});
+  }
+}
+
+function scanForVehicule(){
+  openScanner('Scanner le VIN d\'un véhicule', (code)=>{
+    const v = db.vehicules.find(x=>x.vin && x.vin.toUpperCase()===code.toUpperCase());
+    if(v){ go('vehiculeDetail', {id: v.id}); }
+    else { toast("Aucun véhicule trouvé avec ce VIN."); filterVehicules(code); const input = document.getElementById('vehSearchInput'); if(input) input.value = code; }
+  });
 }
 function ctPill(v){
   if(!v.prochainCT) return `<span class="pill pill-neutral">—</span>`;
@@ -1356,7 +1465,7 @@ function openVehiculeForm(id, presetClientId){
         <div class="field"><label>Kilométrage</label><input id="vKm" type="number" value="${esc(v.km)}"></div>
       </div>
       <div class="field-row cols-2">
-        <div class="field"><label>N° de série (VIN)</label><input id="vVin" value="${esc(v.vin)}"></div>
+        <div class="field"><label>N° de série (VIN)</label><div style="display:flex; gap:8px;"><input id="vVin" value="${esc(v.vin)}" style="flex:1;"><button type="button" class="btn btn-sm" onclick="scanForField('vVin')">${icoBox()}</button></div></div>
         <div class="field"><label>Carburant</label><select id="vCarburant">${['Essence','Diesel','Hybride','Électrique','GPL','Autre'].map(o=>`<option ${v.carburant===o?'selected':''}>${o}</option>`).join('')}</select></div>
       </div>
       <div class="field"><label>Prochain contrôle technique</label><input id="vProchainCT" type="date" value="${v.prochainCT||''}"></div>
@@ -1562,13 +1671,39 @@ function scanForCatalogue(){
   openScanner('Scanner une pièce', (code)=>{
     const existing = db.pieces.find(p=>p.codeBarre===code);
     if(existing){
-      toast(`Pièce reconnue : ${existing.designation}`);
-      openPieceForm(existing.id);
+      openQuickStockAdjust(existing.id);
     } else {
       toast('Nouvelle pièce — code-barres pré-rempli.');
       openPieceForm(null, code);
     }
   });
+}
+function openQuickStockAdjust(pieceId){
+  const p = db.pieces.find(x=>x.id===pieceId); if(!p) return;
+  openModal(`
+    <div class="modal-head"><h3>${esc(p.designation)}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <p style="color:var(--ink-soft); font-size:13px; margin-top:-8px;">Code : ${esc(p.ref||p.codeBarre||'—')} ${p.fournisseur?'· '+esc(p.fournisseur):''}</p>
+    <div style="display:flex; gap:16px; justify-content:center; align-items:center; margin:24px 0;">
+      <button class="btn" style="font-size:26px; width:56px; height:56px;" onclick="quickStockDelta('${p.id}',-1)">−</button>
+      <div style="font-size:36px; font-weight:700; min-width:70px; text-align:center; font-family:var(--font-head);" id="qsaStockBig">${p.stock}</div>
+      <button class="btn btn-primary" style="font-size:26px; width:56px; height:56px;" onclick="quickStockDelta('${p.id}',1)">+</button>
+    </div>
+    <p style="text-align:center; font-size:11.5px; color:var(--ink-faint); margin-top:-14px;">Seuil d'alerte : ${p.seuil}</p>
+    <div class="modal-actions" style="justify-content:space-between;">
+      <button class="btn btn-primary" onclick="closeModal(); scanForCatalogue();">${icoBox()} Scanner la suivante</button>
+      <button class="btn" onclick="closeModal()">Terminé</button>
+    </div>
+  `);
+}
+function quickStockDelta(pieceId, delta){
+  const p = db.pieces.find(x=>x.id===pieceId); if(!p) return;
+  p.stock = Math.max(0, Number(p.stock)+delta);
+  saveDB();
+  const el = document.getElementById('qsaStockBig'); if(el) el.textContent = p.stock;
+  if(delta<0 && Number(p.stock) <= Number(p.seuil)){
+    const fr = findFournisseurByName(p.fournisseur);
+    sendAutomation('stock_bas', {designation_piece:p.designation, code_piece:p.ref||'', stock_actuel:String(p.stock), seuil:String(p.seuil), fournisseur_nom:p.fournisseur||'', fournisseur_email: fr?fr.email:''});
+  }
 }
 function scanForField(inputId){
   openScanner('Scanner un code', (code)=>{
@@ -1975,6 +2110,7 @@ function renderDocEditor(root, type){
         </table>
       </div>
       <button class="btn btn-sm" style="margin-top:10px;" onclick="addLigne()">${icoPlus()} Ajouter une ligne</button>
+      <button class="btn btn-sm" style="margin-top:10px;" onclick="scanForLigne()">${icoBox()} Scanner une pièce</button>
 
       <div class="field-row cols-2" style="margin-top:18px;">
         <div class="field"><label>Remise</label>
@@ -2101,6 +2237,29 @@ function vehiculeOptionsFor(clientId, selected){
 }
 function onDocClientChange(){ document.getElementById('docVehicule').innerHTML = vehiculeOptionsFor(val('docClient'), null); }
 function addLigne(){ editorLignes.push(blankLigne()); renderLignes(); }
+function scanForLigne(){
+  openScanner('Scanner une pièce à ajouter', (code)=>{
+    const p = db.pieces.find(x=>x.codeBarre===code);
+    if(!p){
+      toast("Code inconnu du catalogue — ajoute d'abord cette pièce dans Catalogue & stock.");
+      return;
+    }
+    const existingLine = editorLignes.find(l=>l.type==='piece' && l.pieceId===p.id);
+    if(existingLine){
+      existingLine.qte = (Number(existingLine.qte)||0) + 1;
+      toast(`${p.designation} : quantité +1.`);
+    } else {
+      const l = blankLigne();
+      l.type = 'piece'; l.pieceId = p.id; l.codeInput = (p.ref?p.ref+' — ':'') + p.designation;
+      l.designation = p.designation; l.pu = p.prixVente; l.tva = db.settings.tauxTVA; l.autoDesignation = true;
+      // retire une ligne vide non utilisée s'il n'y en a qu'une
+      if(editorLignes.length===1 && !editorLignes[0].designation && editorLignes[0].type==='info'){ editorLignes = [l]; }
+      else { editorLignes.push(l); }
+      toast(`${p.designation} ajouté au document.`);
+    }
+    renderLignes();
+  });
+}
 function removeLigne(id){ editorLignes = editorLignes.filter(l=>l.id!==id); if(editorLignes.length===0) editorLignes.push(blankLigne()); renderLignes(); }
 function updateLigneQuiet(id, field, value){
   const l = editorLignes.find(x=>x.id===id); if(!l) return;
