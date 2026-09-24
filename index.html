@@ -349,7 +349,7 @@ function defaultDB(){
       nomGarage: 'Mon Garage', adresse: '', cp: '', ville: '', tel: '', email: '', siret: '', tvaIntracom: '',
       tauxTVA: 20,
       mentions: "En cas de retard de paiement, une indemnité forfaitaire de 40€ pour frais de recouvrement est exigible (art. L441-10 C. com.). Devis valable 30 jours.",
-      compteurDevis: 0, compteurFacture: 0, logo: ''
+      compteurDevis: 0, compteurFacture: 0, logo: '', makeWebhookUrl: '', ctNotifsSent: {}, dernierEnvoiRapportMensuel: ''
     }
   };
 }
@@ -415,19 +415,20 @@ function nextNumero(type){
    Aucune dépendance à Claude ici : ça fonctionne sur n'importe quel
    hébergement, y compris GitHub Pages.
    ========================================================================= */
-const MAKE_WEBHOOK_URL = 'https://hook.eu1.make.com/dkambp6hj24l2qigkelh09u1jpc4xmpr';
-let automationsReady = !!MAKE_WEBHOOK_URL;
+function getMakeWebhookUrl(){ return (db.settings.makeWebhookUrl||'').trim(); }
+let automationsReady = true; // vérifié dynamiquement à chaque envoi selon le réglage du garage
 async function initAutomations(){ /* rien à initialiser en mode webhook direct */ }
 const AUTOMATION_FIELDS_TEMPLATE = {
-  evenement:'', client:'', type_client:'', telephone:'', email:'', vehicule:'', date:'', heure:'', motif:'',
-  numero_facture:'', montant_ttc:'', montant_regle:'', reste_du:'', statut:'', designation_piece:'', code_piece:'',
-  stock_actuel:'', seuil:'', fournisseur:'', mois:'', ca_ht:'', ca_ttc:'', nb_factures:''
+  evenement:'', garage_nom:'', client:'', client_email:'', client_telephone:'', type_client:'', vehicule:'', immat:'', date:'', heure:'', motif:'',
+  numero_facture:'', montant_ttc:'', montant_regle:'', reste_du:'', echeance:'', statut:'', designation_piece:'', code_piece:'',
+  stock_actuel:'', seuil:'', fournisseur_nom:'', fournisseur_email:'', mois:'', ca_ht:'', ca_ttc:'', nb_factures:'', ct_echeance:''
 };
 async function sendAutomation(evenement, payload){
-  if(!MAKE_WEBHOOK_URL) return false;
+  const url = getMakeWebhookUrl();
+  if(!url) return false;
   try{
-    const fullPayload = Object.assign({}, AUTOMATION_FIELDS_TEMPLATE, {evenement}, payload);
-    const res = await fetch(MAKE_WEBHOOK_URL, {
+    const fullPayload = Object.assign({}, AUTOMATION_FIELDS_TEMPLATE, {evenement, garage_nom: db.settings.nomGarage||''}, payload);
+    const res = await fetch(url, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify(fullPayload)
@@ -435,6 +436,7 @@ async function sendAutomation(evenement, payload){
     return res.ok;
   }catch(e){ console.warn('Automatisation Make: échec', evenement, e); return false; }
 }
+function findFournisseurByName(nom){ if(!nom) return null; return db.fournisseurs.find(f=>f.nom.toLowerCase()===nom.toLowerCase()); }
 function checkStockAlerts(lignes){
   const seen = new Set();
   (lignes||[]).forEach(l=>{
@@ -442,7 +444,8 @@ function checkStockAlerts(lignes){
       seen.add(l.pieceId);
       const p = db.pieces.find(x=>x.id===l.pieceId);
       if(p && Number(p.stock) <= Number(p.seuil)){
-        sendAutomation('stock_bas', {designation_piece:p.designation, code_piece:p.ref||'', stock_actuel:String(p.stock), seuil:String(p.seuil), fournisseur:p.fournisseur||''});
+        const fr = findFournisseurByName(p.fournisseur);
+        sendAutomation('stock_bas', {designation_piece:p.designation, code_piece:p.ref||'', stock_actuel:String(p.stock), seuil:String(p.seuil), fournisseur_nom:p.fournisseur||'', fournisseur_email: fr?fr.email:''});
       }
     }
   });
@@ -470,10 +473,31 @@ function sendMonthlyReportNow(){
     if(ok){ db.settings.dernierEnvoiRapportMensuel = ym; saveDB(); }
   });
 }
+function maybeSendCtReminders(){
+  if(!automationsReady) return;
+  db.settings.ctNotifsSent = db.settings.ctNotifsSent || {};
+  const today = TODAY();
+  db.vehicules.forEach(v=>{
+    if(!v.prochainCT) return;
+    const j = Math.round((new Date(v.prochainCT+'T00:00:00') - new Date(today+'T00:00:00'))/86400000);
+    if(j<0 || j>30) return; // seulement entre 0 et 30 jours avant échéance
+    const already = db.settings.ctNotifsSent[v.id];
+    if(already === v.prochainCT) return; // déjà envoyé pour cette échéance précise
+    const c = getClient(v.clientId);
+    sendAutomation('ct_a_prevoir', {client: clientLabel(c), client_email: c?.email||'', client_telephone: c?.tel||'', vehicule: vehiculeLabel(v), immat: v.immat||'', ct_echeance: v.prochainCT}).then(ok=>{
+      if(ok){ db.settings.ctNotifsSent[v.id] = v.prochainCT; saveDB(); }
+    });
+  });
+}
+function saveMakeWebhook(){
+  db.settings.makeWebhookUrl = val('sMakeWebhook');
+  saveDB(); toast(db.settings.makeWebhookUrl ? 'Webhook Make enregistré.' : 'Webhook Make retiré — les automatisations sont désactivées.');
+}
 function testAutomation(){
+  if(!getMakeWebhookUrl()){ toast("Renseigne d'abord l'URL du webhook Make ci-dessus, puis clique sur Enregistrer."); return; }
   toast('Envoi du test en cours…');
   sendAutomation('test', {client:'Test GarageOS', motif:'Vérification de connexion depuis Paramètres'}).then(ok=>{
-    toast(ok ? "Test envoyé — regarde l'historique de l'exécution dans Make." : "Échec du test : vérifie que Make est bien connecté.");
+    toast(ok ? "Test envoyé — regarde l'historique de l'exécution dans Make." : "Échec du test : vérifie l'URL du webhook.");
   });
 }
 
@@ -653,7 +677,7 @@ function currentRole(){ const u = getSessionUser(); return u ? u.role : 'admin';
 function boot(){
   const u = getSessionUser();
   if(!u){ showLogin(); } else { showApp(); render(); }
-  initAutomations().then(()=>{ maybeSendMonthlyReport(); });
+  initAutomations().then(()=>{ maybeSendMonthlyReport(); maybeSendCtReminders(); });
 }
 function showApp(){ document.getElementById('app').style.display='flex'; document.getElementById('loginScreen').style.display='none'; }
 function showLogin(){ document.getElementById('app').style.display='none'; renderLogin(); document.getElementById('loginScreen').style.display='flex'; }
@@ -956,7 +980,10 @@ function submitRdvForm(ev,id){
   ev.preventDefault();
   const data = {clientId:val('rClient'), vehiculeId:val('rVehicule'), date:val('rDate'), heure:val('rHeure'), duree:parseInt(val('rDuree'))||60, motif:val('rMotif'), statut:val('rStatut'), notes:val('rNotes')};
   if(id){ Object.assign(db.rdv.find(x=>x.id===id), data); toast('Rendez-vous mis à jour.'); }
-  else { data.id = uid('rdv'); data.creePar = (getSessionUser()||{}).nom||''; db.rdv.push(data); toast('Rendez-vous ajouté.'); sendAutomation('nouveau_rdv', {client: clientLabel(getClient(data.clientId)), vehicule: vehiculeLabel(getVehicule(data.vehiculeId)), date: data.date, heure: data.heure, motif: data.motif}); }
+  else { data.id = uid('rdv'); data.creePar = (getSessionUser()||{}).nom||''; db.rdv.push(data); toast('Rendez-vous ajouté.');
+    const c = getClient(data.clientId); const v = getVehicule(data.vehiculeId);
+    sendAutomation('nouveau_rdv', {client: clientLabel(c), client_email: c?.email||'', client_telephone: c?.tel||'', vehicule: vehiculeLabel(v), immat: v?.immat||'', date: data.date, heure: data.heure, motif: data.motif});
+  }
   saveDB(); closeModal(); go('planning',{weekStart: mondayOf(data.date)});
 }
 function deleteRdv(id){
@@ -1035,7 +1062,7 @@ function submitClientForm(ev, id){
   ev.preventDefault();
   const data = {type: val('cType'), societe: val('cSociete'), prenom: val('cPrenom'), nom: val('cNom'), tel: val('cTel'), email: val('cEmail'), adresse: val('cAdresse'), cp: val('cCp'), ville: val('cVille'), notes: val('cNotes')};
   if(id){ Object.assign(getClient(id), data); toast('Client mis à jour.'); }
-  else { data.id = uid('cli'); data.createdAt = TODAY(); db.clients.push(data); toast('Client créé.'); sendAutomation('nouveau_client', {client: clientLabel(data), type_client: data.type, telephone: data.tel, email: data.email}); }
+  else { data.id = uid('cli'); data.createdAt = TODAY(); db.clients.push(data); toast('Client créé.'); sendAutomation('nouveau_client', {client: clientLabel(data), client_email: data.email, client_telephone: data.tel, type_client: data.type}); }
   saveDB(); closeModal(); render();
 }
 function deleteClient(id){
@@ -1423,7 +1450,7 @@ function submitPieceForm(ev,id){
   const data = {ref:val('pRef'), designation:val('pDesignation'), fournisseur:val('pFournisseur'), prixAchat:parseFloat(val('pPrixAchat'))||0, prixVente:parseFloat(val('pPrixVente'))||0, stock:parseInt(val('pStock'))||0, seuil:parseInt(val('pSeuil'))||0};
   if(id){ Object.assign(db.pieces.find(x=>x.id===id), data); toast('Pièce mise à jour.'); }
   else { data.id = uid('pce'); db.pieces.push(data); toast('Pièce ajoutée au catalogue.'); }
-  if(Number(data.stock) <= Number(data.seuil)){ sendAutomation('stock_bas', {designation_piece:data.designation, code_piece:data.ref||'', stock_actuel:String(data.stock), seuil:String(data.seuil), fournisseur:data.fournisseur||''}); }
+  if(Number(data.stock) <= Number(data.seuil)){ const fr=findFournisseurByName(data.fournisseur); sendAutomation('stock_bas', {designation_piece:data.designation, code_piece:data.ref||'', stock_actuel:String(data.stock), seuil:String(data.seuil), fournisseur_nom:data.fournisseur||'', fournisseur_email: fr?fr.email:''}); }
   saveDB(); closeModal(); render();
 }
 function deletePiece(id){ if(!confirm('Supprimer cette pièce du catalogue ?')) return; db.pieces = db.pieces.filter(p=>p.id!==id); saveDB(); closeModal(); render(); }
@@ -1433,7 +1460,7 @@ function adjustStock(id){
   if(delta===null || delta.trim()==='') return;
   const n = parseInt(delta); if(isNaN(n)) return;
   p.stock = Math.max(0, Number(p.stock) + n);
-  if(Number(p.stock) <= Number(p.seuil)){ sendAutomation('stock_bas', {designation_piece:p.designation, code_piece:p.ref||'', stock_actuel:String(p.stock), seuil:String(p.seuil), fournisseur:p.fournisseur||''}); }
+  if(Number(p.stock) <= Number(p.seuil)){ const fr=findFournisseurByName(p.fournisseur); sendAutomation('stock_bas', {designation_piece:p.designation, code_piece:p.ref||'', stock_actuel:String(p.stock), seuil:String(p.seuil), fournisseur_nom:p.fournisseur||'', fournisseur_email: fr?fr.email:''}); }
   saveDB(); render(); toast('Stock mis à jour.');
 }
 function renderMoTab(root){
@@ -1663,8 +1690,8 @@ function renderRelancesBox(doc){
 function sendRelance(factureId, methode){
   const f = db.factures.find(x=>x.id===factureId); if(!f) return;
   f.relances = f.relances || []; f.relances.push({date: TODAY(), methode}); saveDB();
+  const c = getClient(f.clientId);
   if(methode==='email'){
-    const c = getClient(f.clientId);
     const total = docTotals(f).ttc; const reste = Math.max(total-(f.montantPaye||0),0);
     const subject = encodeURIComponent(`Relance — Facture ${f.numero}`);
     const body = encodeURIComponent(`Bonjour ${clientLabel(c)},\n\nSauf erreur de notre part, la facture ${f.numero} du ${fdate(f.date)} d'un montant de ${money(reste)} reste à ce jour impayée.\n\nMerci de bien vouloir procéder au règlement dans les meilleurs délais.\n\nCordialement,\n${db.settings.nomGarage}`);
@@ -1672,7 +1699,7 @@ function sendRelance(factureId, methode){
     window.open(`mailto:${mail}?subject=${subject}&body=${body}`, '_blank');
     toast('Brouillon de relance ouvert dans votre messagerie.');
   } else { toast('Appel de relance noté.'); }
-  sendAutomation('relance_envoyee', {numero: f.numero, client: clientLabel(getClient(f.clientId)), montant_ttc: docTotals(f).ttc.toFixed(2), reste_du: String(Math.max(docTotals(f).ttc-(f.montantPaye||0),0).toFixed(2)), statut: methode});
+  sendAutomation('relance_envoyee', {numero_facture: f.numero, client: clientLabel(c), client_email: c?.email||'', montant_ttc: docTotals(f).ttc.toFixed(2), reste_du: String(Math.max(docTotals(f).ttc-(f.montantPaye||0),0).toFixed(2)), echeance: f.dateEcheance||'', statut: methode});
   render();
 }
 function blankLigne(){ return {id: uid('l'), type:'info', codeInput:'', pieceId:'', moId:'', autoDesignation:true, designation:'', qte:1, pu:0, tva: db.settings.tauxTVA}; }
@@ -1766,13 +1793,14 @@ function saveDoc(type){
   doc.notes = val('docNotes'); doc.lignes = lignesClean;
   if(isFacture){
     doc.statut = val('fStatut'); doc.dateEcheance = val('fEcheance'); doc.montantPaye = parseFloat(val('fMontantPaye'))||0;
+    const cAuto = getClient(doc.clientId); const vAuto = getVehicule(doc.vehiculeId);
     if(isNew){
       deductStock(lignesClean);
       checkStockAlerts(lignesClean);
-      sendAutomation('facture_creee', {numero: doc.numero, client: clientLabel(getClient(doc.clientId)), montant_ttc: docTotals(doc).ttc.toFixed(2), statut: doc.statut});
+      sendAutomation('facture_creee', {numero_facture: doc.numero, client: clientLabel(cAuto), client_email: cAuto?.email||'', vehicule: vehiculeLabel(vAuto), immat: vAuto?.immat||'', montant_ttc: docTotals(doc).ttc.toFixed(2), echeance: doc.dateEcheance||'', statut: doc.statut});
     } else if(oldStatut!=='payee' && doc.statut==='payee'){
       const t = docTotals(doc);
-      sendAutomation('paiement_recu', {numero: doc.numero, client: clientLabel(getClient(doc.clientId)), montant_ttc: t.ttc.toFixed(2), montant_regle: String(doc.montantPaye||0)});
+      sendAutomation('paiement_recu', {numero_facture: doc.numero, client: clientLabel(cAuto), client_email: cAuto?.email||'', montant_ttc: t.ttc.toFixed(2), montant_regle: String(doc.montantPaye||0)});
     }
   } else { doc.statut = document.getElementById('dStatut').value; }
   saveDB();
@@ -2187,7 +2215,10 @@ function viewParametres(root){
       </div>
       <div class="card" style="margin-bottom:14px;">
         <h3 style="margin-bottom:10px;">Automatisations (Make)</h3>
-        <p style="color:var(--ink-soft); font-size:12.8px; margin-bottom:10px;">GarageOS déclenche le scénario Make "GarageOS - Automatisations" pour : nouveau client, nouveau rendez-vous, facture créée, paiement reçu, relance envoyée, stock bas, CA mensuel. Configure ce qui se passe pour chaque événement directement dans l'éditeur Make (le champ "evenement" indique de quel type d'action il s'agit).</p>
+        <p style="color:var(--ink-soft); font-size:12.8px; margin-bottom:10px;">Colle ici l'adresse de ton propre webhook Make (dans Make : Modules → Webhooks → Custom webhook). Chaque garage utilisant GarageOS configure le sien — ce réglage est propre à ce poste.</p>
+        <div class="field"><label>URL du webhook Make</label><input id="sMakeWebhook" placeholder="https://hook.eu1.make.com/xxxxxxxxxxxx" value="${esc(db.settings.makeWebhookUrl||'')}"></div>
+        <button class="btn btn-sm" style="margin-bottom:12px;" onclick="saveMakeWebhook()">Enregistrer l'URL</button>
+        <p style="color:var(--ink-soft); font-size:12.3px; margin:0 0 10px 0;">Événements envoyés (champ "evenement") : <strong>nouveau_client, nouveau_rdv, facture_creee, paiement_recu, relance_envoyee, stock_bas, ct_a_prevoir, ca_mensuel</strong>. L'email et le téléphone du client sont inclus quand disponibles — de quoi construire de vraies automatisations vers le client final (confirmation de RDV, rappel de contrôle technique, relance de paiement), pas seulement des notifications internes.</p>
         <button class="btn btn-sm" onclick="testAutomation()">Tester la connexion Make</button>
       </div>
       <div class="card">
