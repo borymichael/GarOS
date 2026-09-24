@@ -314,6 +314,23 @@ th.sortable:hover{color:var(--ink);}
 th.sortable .arrow{opacity:.4; font-size:9px; margin-left:3px;}
 th.sortable.sorted .arrow{opacity:1; color:var(--accent);}
 
+/* mobile : tableaux -> cartes tactiles, zones de clic agrandies */
+@media(max-width:640px){
+  .table-wrap.responsive-cards thead{ display:none; }
+  .table-wrap.responsive-cards table, .table-wrap.responsive-cards tbody, .table-wrap.responsive-cards tr, .table-wrap.responsive-cards td{ display:block; width:100%; }
+  .table-wrap.responsive-cards tr{ padding:14px 14px; border-bottom:1px solid var(--border); }
+  .table-wrap.responsive-cards tr:active{ background:var(--surface-alt); }
+  .table-wrap.responsive-cards td{ border:none; padding:3px 0; display:flex; justify-content:space-between; align-items:center; gap:10px; text-align:right; }
+  .table-wrap.responsive-cards td::before{ content:attr(data-label); font-weight:600; color:var(--ink-soft); font-size:11px; text-transform:uppercase; letter-spacing:.02em; text-align:left; flex:0 0 auto; }
+  .table-wrap.responsive-cards td:empty{ display:none; }
+  .table-wrap.responsive-cards td[data-label=""]{ display:none; }
+  .table-wrap.responsive-cards td.card-title{ padding-bottom:8px; margin-bottom:6px; border-bottom:1px solid var(--surface-alt); }
+  .table-wrap.responsive-cards td.card-title::before{ display:none; }
+  .table-wrap.responsive-cards td.card-title{ justify-content:flex-start; text-align:left; font-size:15px; }
+  .btn, .navbtn, .tab-btn, .pin-key, .day-add{ min-height:38px; }
+  .btn-sm{ min-height:32px; }
+}
+
 @media(max-width:880px){
   .sidebar{position:fixed; top:0; left:0; bottom:0; transform:translateX(-100%);}
   .sidebar.open{transform:translateX(0); box-shadow:0 0 40px rgba(0,0,0,.35);}
@@ -1158,7 +1175,7 @@ function viewClients(root){
       <div class="grow"><input class="search" id="clientsSearchInput" placeholder="Rechercher un client (nom, téléphone, email)…" value="${esc(state.params.q||'')}" oninput="filterClients(this.value)"></div>
       <button class="btn btn-primary" onclick="openClientForm()">${icoPlus()} Nouveau client</button>
     </div>
-    <div class="table-wrap"><table>
+    <div class="table-wrap responsive-cards"><table>
       <thead><tr>${thSort('clients','nom','Client')}${thSort('clients','type','Type')}<th>Téléphone</th><th>Email</th>${thSort('clients','vehicules','Véhicules')}</tr></thead>
       <tbody id="clientsBody"></tbody>
     </table></div>
@@ -1171,10 +1188,10 @@ function buildClientsRows(q){
   if(!sortState.clients || !sortState.clients.key) list = list.slice().sort((a,b)=>clientLabel(a).localeCompare(clientLabel(b)));
   if(list.length===0) return `<tr><td colspan="5"><div class="empty">${icoInbox()}<div>Aucun client trouvé.</div></div></td></tr>`;
   return list.map(c=>`<tr onclick="go('clientDetail',{id:'${c.id}'})">
-      <td><strong>${esc(clientLabel(c))}</strong></td>
-      <td>${c.type==='pro'?'<span class="pill pill-accent">Professionnel</span>':'<span class="pill pill-neutral">Particulier</span>'}</td>
-      <td>${esc(c.tel||'—')}</td><td>${esc(c.email||'—')}</td>
-      <td class="num">${vehiculesOf(c.id).length}</td>
+      <td class="card-title"><strong>${esc(clientLabel(c))}</strong></td>
+      <td data-label="Type">${c.type==='pro'?'<span class="pill pill-accent">Professionnel</span>':'<span class="pill pill-neutral">Particulier</span>'}</td>
+      <td data-label="Téléphone">${esc(c.tel||'—')}</td><td data-label="Email">${esc(c.email||'—')}</td>
+      <td class="num" data-label="Véhicules">${vehiculesOf(c.id).length}</td>
     </tr>`).join('');
 }
 function filterClients(q){ state.params.q = q; const body = document.getElementById('clientsBody'); if(body) body.innerHTML = buildClientsRows(q); }
@@ -1285,7 +1302,7 @@ function viewVehicules(root){
       <div class="grow"><input class="search" id="vehSearchInput" placeholder="Rechercher (marque, modèle, immatriculation, client)…" value="${esc(state.params.q||'')}" oninput="filterVehicules(this.value)"></div>
       <button class="btn btn-primary" onclick="openVehiculeForm()">${icoPlus()} Nouveau véhicule</button>
     </div>
-    <div class="table-wrap"><table><thead><tr><th>Véhicule</th><th>Immatriculation</th><th>Client</th><th class="num">Km</th><th>Contrôle technique</th></tr></thead><tbody id="vehBody"></tbody></table></div>
+    <div class="table-wrap responsive-cards"><table><thead><tr><th>Véhicule</th><th>Immatriculation</th><th>Client</th><th class="num">Km</th><th>Contrôle technique</th></tr></thead><tbody id="vehBody"></tbody></table></div>
   `;
   filterVehicules(state.params.q||'');
 }
@@ -1300,10 +1317,10 @@ function buildVehiculesRows(q){
   const list = db.vehicules.filter(v=>{ if(!q) return true; const c = getClient(v.clientId); return (vehiculeLabel(v)+' '+clientLabel(c)).toLowerCase().includes(q.toLowerCase()); }).sort((a,b)=>(a.marque||'').localeCompare(b.marque||''));
   if(list.length===0) return `<tr><td colspan="5"><div class="empty">${icoInbox()}<div>Aucun véhicule.</div></div></td></tr>`;
   return list.map(v=>`<tr onclick="go('vehiculeDetail',{id:'${v.id}'})">
-      <td><strong>${esc(v.marque)} ${esc(v.modele)}</strong> ${v.annee?`<span style="color:var(--ink-faint)">(${esc(v.annee)})</span>`:''}</td>
-      <td>${esc((v.immat||'—').toUpperCase())}</td>
-      <td><span class="link-btn" onclick="event.stopPropagation(); go('clientDetail',{id:'${v.clientId}'})">${esc(clientLabel(getClient(v.clientId)))}</span></td>
-      <td class="num">${v.km?Number(v.km).toLocaleString('fr-FR'):'—'}</td><td>${ctPill(v)}</td>
+      <td class="card-title"><strong>${esc(v.marque)} ${esc(v.modele)}</strong> ${v.annee?`<span style="color:var(--ink-faint)">(${esc(v.annee)})</span>`:''}</td>
+      <td data-label="Immatriculation">${esc((v.immat||'—').toUpperCase())}</td>
+      <td data-label="Client"><span class="link-btn" onclick="event.stopPropagation(); go('clientDetail',{id:'${v.clientId}'})">${esc(clientLabel(getClient(v.clientId)))}</span></td>
+      <td class="num" data-label="Km">${v.km?Number(v.km).toLocaleString('fr-FR'):'—'}</td><td data-label="Contrôle technique">${ctPill(v)}</td>
     </tr>`).join('');
 }
 function filterVehicules(q){ state.params.q = q; const body = document.getElementById('vehBody'); if(body) body.innerHTML = buildVehiculesRows(q); }
@@ -1495,7 +1512,7 @@ function viewFichesList(root){
     <div class="card" style="margin-bottom:14px; background:var(--surface-alt);">
       <p style="font-size:12.5px; color:var(--ink-soft); margin:0;">${icoShield()} Ce référentiel est rempli par votre équipe à partir de vos propres sources (RTA, ETAI, documentation constructeur). Vérifiez toujours la valeur d'origine avant une intervention critique (serrage de roue, organes de sécurité…).</p>
     </div>
-    <div class="table-wrap"><table><thead><tr><th>Marque</th><th>Modèle</th><th>Motorisation</th><th></th></tr></thead><tbody id="fichesBody"></tbody></table></div>
+    <div class="table-wrap responsive-cards"><table><thead><tr><th>Marque</th><th>Modèle</th><th>Motorisation</th><th></th></tr></thead><tbody id="fichesBody"></tbody></table></div>
   `;
   filterFiches(state.params.q||'');
 }
@@ -1503,8 +1520,8 @@ function buildFichesRows(q){
   const list = db.fichesTechniques.filter(f=>!q || (f.marque+' '+f.modele+' '+(f.motorisation||'')).toLowerCase().includes(q.toLowerCase())).sort((a,b)=>a.marque.localeCompare(b.marque)||a.modele.localeCompare(b.modele));
   if(list.length===0) return `<tr><td colspan="4"><div class="empty">${icoInbox()}<div>Aucune fiche technique enregistrée.</div></div></td></tr>`;
   return list.map(f=>`<tr onclick="go('ficheEdit',{id:'${f.id}'})">
-      <td><strong>${esc(f.marque)}</strong></td><td>${esc(f.modele)}</td><td>${esc(f.motorisation||'—')}</td>
-      <td class="num"><button class="btn btn-sm" onclick="event.stopPropagation(); printFiche('${f.id}')">${icoPrint()}</button></td>
+      <td class="card-title"><strong>${esc(f.marque)}</strong></td><td data-label="Modèle">${esc(f.modele)}</td><td data-label="Motorisation">${esc(f.motorisation||'—')}</td>
+      <td class="num" data-label=""><button class="btn btn-sm" onclick="event.stopPropagation(); printFiche('${f.id}')">${icoPrint()}</button></td>
     </tr>`).join('');
 }
 function filterFiches(q){ state.params.q = q; const body = document.getElementById('fichesBody'); if(body) body.innerHTML = buildFichesRows(q); }
@@ -1577,10 +1594,10 @@ function viewCatalogue(root){
 function renderFournisseursTab(root){
   root.innerHTML = `
     <div class="toolbar"><div style="flex:1"></div><button class="btn btn-primary" onclick="openFournisseurForm()">${icoPlus()} Nouveau fournisseur</button></div>
-    <div class="table-wrap"><table><thead><tr><th>Nom</th><th>Contact</th><th>Téléphone</th><th>Email</th></tr></thead><tbody>
+    <div class="table-wrap responsive-cards"><table><thead><tr><th>Nom</th><th>Contact</th><th>Téléphone</th><th>Email</th></tr></thead><tbody>
       ${db.fournisseurs.length===0?`<tr><td colspan="4"><div class="empty">${icoInbox()}<div>Aucun fournisseur enregistré.</div></div></td></tr>`:
         db.fournisseurs.slice().sort((a,b)=>a.nom.localeCompare(b.nom)).map(fo=>`<tr onclick="openFournisseurForm('${fo.id}')">
-          <td><strong>${esc(fo.nom)}</strong></td><td>${esc(fo.contact||'—')}</td><td>${esc(fo.tel||'—')}</td><td>${esc(fo.email||'—')}</td>
+          <td class="card-title"><strong>${esc(fo.nom)}</strong></td><td data-label="Contact">${esc(fo.contact||'—')}</td><td data-label="Téléphone">${esc(fo.tel||'—')}</td><td data-label="Email">${esc(fo.email||'—')}</td>
         </tr>`).join('')}
     </tbody></table></div>
   `;
@@ -1619,7 +1636,7 @@ function renderPiecesTab(root){
       <div class="grow"><input class="search" id="piecesSearchInput" placeholder="Rechercher une pièce (désignation, code, fournisseur)…" value="${esc(state.params.q||'')}" oninput="filterPieces(this.value)"></div>
       <button class="btn btn-primary" onclick="openPieceForm()">${icoPlus()} Nouvelle pièce</button>
     </div>
-    <div class="table-wrap"><table>
+    <div class="table-wrap responsive-cards"><table>
       <thead><tr><th>Code</th><th>Désignation</th><th>Fournisseur</th><th class="num">Achat HT</th><th class="num">Vente HT</th><th class="num">Stock</th><th></th></tr></thead>
       <tbody id="stockBody"></tbody>
     </table></div>
@@ -1632,10 +1649,10 @@ function buildPiecesRows(q){
   return list.map(p=>{
     const low = Number(p.stock) <= Number(p.seuil);
     return `<tr class="${low?'low-stock-row':''}" onclick="openPieceForm('${p.id}')">
-      <td class="mono">${esc(p.ref||'—')}</td><td><strong>${esc(p.designation)}</strong></td><td>${esc(p.fournisseur||'—')}</td>
-      <td class="num">${money(p.prixAchat)}</td><td class="num">${money(p.prixVente)}</td>
-      <td class="num">${p.stock} ${low?`<span class="pill pill-warn" style="margin-left:6px;">bas</span>`:''}</td>
-      <td class="num"><button class="btn btn-sm" onclick="event.stopPropagation(); adjustStock('${p.id}')">Ajuster</button></td>
+      <td class="mono" data-label="Code">${esc(p.ref||'—')}</td><td class="card-title"><strong>${esc(p.designation)}</strong></td><td data-label="Fournisseur">${esc(p.fournisseur||'—')}</td>
+      <td class="num" data-label="Achat HT">${money(p.prixAchat)}</td><td class="num" data-label="Vente HT">${money(p.prixVente)}</td>
+      <td class="num" data-label="Stock">${p.stock} ${low?`<span class="pill pill-warn" style="margin-left:6px;">bas</span>`:''}</td>
+      <td class="num" data-label=""><button class="btn btn-sm" onclick="event.stopPropagation(); adjustStock('${p.id}')">Ajuster</button></td>
     </tr>`;
   }).join('');
 }
@@ -1691,7 +1708,7 @@ function renderMoTab(root){
       <div class="grow"><input class="search" id="moSearchInput" placeholder="Rechercher une opération (désignation, code)…" value="${esc(state.params.q||'')}" oninput="filterMo(this.value)"></div>
       <button class="btn btn-primary" onclick="openMoForm()">${icoPlus()} Nouvelle opération</button>
     </div>
-    <div class="table-wrap"><table>
+    <div class="table-wrap responsive-cards"><table>
       <thead><tr><th>Code</th><th>Désignation</th><th class="num">Temps estimé</th><th class="num">Prix HT</th><th></th></tr></thead>
       <tbody id="moBody"></tbody>
     </table></div>
@@ -1702,9 +1719,9 @@ function buildMoRows(q){
   const list = db.mainOeuvre.filter(m=>!q || (m.designation+' '+m.code).toLowerCase().includes(q.toLowerCase())).sort((a,b)=>a.designation.localeCompare(b.designation));
   if(list.length===0) return `<tr><td colspan="5"><div class="empty">${icoInbox()}<div>Aucune opération de main d'œuvre enregistrée.</div></div></td></tr>`;
   return list.map(m=>`<tr onclick="openMoForm('${m.id}')">
-      <td class="mono">${esc(m.code||'—')}</td><td><strong>${esc(m.designation)}</strong></td>
-      <td class="num">${m.tempsMin?m.tempsMin+' min':'—'}</td><td class="num">${money(m.prixHT)}</td>
-      <td class="num"><button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); deleteMo('${m.id}')">${icoTrash()}</button></td>
+      <td class="mono" data-label="Code">${esc(m.code||'—')}</td><td class="card-title"><strong>${esc(m.designation)}</strong></td>
+      <td class="num" data-label="Temps estimé">${m.tempsMin?m.tempsMin+' min':'—'}</td><td class="num" data-label="Prix HT">${money(m.prixHT)}</td>
+      <td class="num" data-label=""><button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); deleteMo('${m.id}')">${icoTrash()}</button></td>
     </tr>`).join('');
 }
 function filterMo(q){ state.params.q = q; const body = document.getElementById('moBody'); if(body) body.innerHTML = buildMoRows(q); }
@@ -1748,7 +1765,7 @@ function viewDevisList(root){
       <div class="grow"><input class="search" id="devisSearchInput" placeholder="Rechercher un devis…" value="${esc(state.params.q||'')}" oninput="filterDevis(this.value)"></div>
       <button class="btn btn-primary" onclick="go('devisEdit',{})">${icoPlus()} Nouveau devis</button>
     </div>
-    <div class="table-wrap"><table><thead><tr><th>N°</th><th>Client</th><th>Véhicule</th><th>Date</th><th class="num">Total TTC</th><th>Statut</th></tr></thead><tbody id="devisBody"></tbody></table></div>
+    <div class="table-wrap responsive-cards"><table><thead><tr><th>N°</th><th>Client</th><th>Véhicule</th><th>Date</th><th class="num">Total TTC</th><th>Statut</th></tr></thead><tbody id="devisBody"></tbody></table></div>
   `;
   filterDevis(state.params.q||'');
 }
@@ -1756,8 +1773,8 @@ function buildDevisRows(q){
   const list = db.devis.filter(d=>!q || (d.numero+' '+clientLabel(getClient(d.clientId))).toLowerCase().includes(q.toLowerCase())).sort((a,b)=>b.date.localeCompare(a.date));
   if(list.length===0) return `<tr><td colspan="6"><div class="empty">${icoInbox()}<div>Aucun devis. Créez-en un pour commencer.</div></div></td></tr>`;
   return list.map(d=>`<tr onclick="go('devisEdit',{id:'${d.id}'})">
-      <td><strong>${esc(d.numero)}</strong></td><td>${esc(clientLabel(getClient(d.clientId)))}</td><td>${esc(vehiculeLabel(getVehicule(d.vehiculeId)))}</td>
-      <td>${fdate(d.date)}</td><td class="num">${money(docTotals(d).ttc)}</td><td>${statutDevisPill(d)}</td>
+      <td class="card-title"><strong>${esc(d.numero)}</strong></td><td data-label="Client">${esc(clientLabel(getClient(d.clientId)))}</td><td data-label="Véhicule">${esc(vehiculeLabel(getVehicule(d.vehiculeId)))}</td>
+      <td data-label="Date">${fdate(d.date)}</td><td class="num" data-label="Total TTC">${money(docTotals(d).ttc)}</td><td data-label="Statut">${statutDevisPill(d)}</td>
     </tr>`).join('');
 }
 function filterDevis(q){ state.params.q = q; const body = document.getElementById('devisBody'); if(body) body.innerHTML = buildDevisRows(q); }
@@ -1767,7 +1784,7 @@ function viewFacturesList(root){
       <div class="grow"><input class="search" id="facturesSearchInput" placeholder="Rechercher une facture…" value="${esc(state.params.q||'')}" oninput="filterFactures(this.value)"></div>
       <button class="btn btn-primary" onclick="go('factureEdit',{})">${icoPlus()} Nouvelle facture</button>
     </div>
-    <div class="table-wrap"><table><thead><tr>${thSort('factures','numero','N°')}${thSort('factures','client','Client')}<th>Véhicule</th>${thSort('factures','date','Date')}${thSort('factures','montant','Total TTC')}${thSort('factures','statut','Statut')}</tr></thead><tbody id="facturesBody"></tbody></table></div>
+    <div class="table-wrap responsive-cards"><table><thead><tr>${thSort('factures','numero','N°')}${thSort('factures','client','Client')}<th>Véhicule</th>${thSort('factures','date','Date')}${thSort('factures','montant','Total TTC')}${thSort('factures','statut','Statut')}</tr></thead><tbody id="facturesBody"></tbody></table></div>
   `;
   filterFactures(state.params.q||'');
 }
@@ -1778,8 +1795,8 @@ function buildFacturesRows(q){
   } else { list = list.slice().sort((a,b)=>b.date.localeCompare(a.date)); }
   if(list.length===0) return `<tr><td colspan="6"><div class="empty">${icoInbox()}<div>Aucune facture. Créez-en une pour commencer.</div></div></td></tr>`;
   return list.map(f=>`<tr class="${isEnRetard(f)?'retard-row':''}" onclick="go('factureEdit',{id:'${f.id}'})">
-      <td><strong>${esc(f.numero)}</strong></td><td>${esc(clientLabel(getClient(f.clientId)))}</td><td>${esc(vehiculeLabel(getVehicule(f.vehiculeId)))}</td>
-      <td>${fdate(f.date)}</td><td class="num">${money(docTotals(f).ttc)}</td><td>${statutPill(f)}</td>
+      <td class="card-title"><strong>${esc(f.numero)}</strong></td><td data-label="Client">${esc(clientLabel(getClient(f.clientId)))}</td><td data-label="Véhicule">${esc(vehiculeLabel(getVehicule(f.vehiculeId)))}</td>
+      <td data-label="Date">${fdate(f.date)}</td><td class="num" data-label="Total TTC">${money(docTotals(f).ttc)}</td><td data-label="Statut">${statutPill(f)}</td>
     </tr>`).join('');
 }
 function filterFactures(q){ state.params.q = q; const body = document.getElementById('facturesBody'); if(body) body.innerHTML = buildFacturesRows(q); }
