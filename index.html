@@ -418,13 +418,19 @@ function nextNumero(type){
 const MAKE_WEBHOOK_URL = 'https://hook.eu1.make.com/dkambp6hj24l2qigkelh09u1jpc4xmpr';
 let automationsReady = !!MAKE_WEBHOOK_URL;
 async function initAutomations(){ /* rien à initialiser en mode webhook direct */ }
+const AUTOMATION_FIELDS_TEMPLATE = {
+  evenement:'', client:'', type_client:'', telephone:'', email:'', vehicule:'', date:'', heure:'', motif:'',
+  numero_facture:'', montant_ttc:'', montant_regle:'', reste_du:'', statut:'', designation_piece:'', code_piece:'',
+  stock_actuel:'', seuil:'', fournisseur:'', mois:'', ca_ht:'', ca_ttc:'', nb_factures:''
+};
 async function sendAutomation(evenement, payload){
   if(!MAKE_WEBHOOK_URL) return false;
   try{
+    const fullPayload = Object.assign({}, AUTOMATION_FIELDS_TEMPLATE, {evenement}, payload);
     const res = await fetch(MAKE_WEBHOOK_URL, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(Object.assign({evenement}, payload))
+      body: JSON.stringify(fullPayload)
     });
     return res.ok;
   }catch(e){ console.warn('Automatisation Make: échec', evenement, e); return false; }
